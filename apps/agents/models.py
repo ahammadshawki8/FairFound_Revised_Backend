@@ -1,0 +1,113 @@
+from django.db import models
+from django.conf import settings
+
+
+class IngestionJob(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'), ('running', 'Running'), 
+        ('done', 'Done'), ('error', 'Error'), ('review', 'Needs Review')
+    ]
+    
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='ingestion_jobs')
+    input_data = models.JSONField(default=dict)
+    result = models.JSONField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class Evidence(models.Model):
+    SOURCE_CHOICES = [
+        ('cv', 'CV/Resume'), ('github', 'GitHub'), ('portfolio', 'Portfolio'),
+        ('linkedin', 'LinkedIn Public'), ('blog', 'Blog/Medium'), ('form', 'Form Input')
+    ]
+    
+    job = models.ForeignKey(IngestionJob, on_delete=models.CASCADE, related_name='evidence')
+    source = models.CharField(max_length=50, choices=SOURCE_CHOICES)
+    raw_content = models.TextField(blank=True)
+    extracted_data = models.JSONField(default=dict)
+    confidence = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ScoreSnapshot(models.Model):
+    job = models.ForeignKey(IngestionJob, on_delete=models.CASCADE, related_name='scores')
+    overall_score = models.FloatField()
+    breakdown = models.JSONField(default=dict)
+    llm_rationale = models.TextField(blank=True)
+    improvements = models.JSONField(default=list)
+    confidence = models.FloatField(default=0.0)
+    flagged_for_human = models.BooleanField(default=False)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    review_notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class BenchmarkCohort(models.Model):
+    """Stores benchmark data for comparison - from synthetic + real aggregated data"""
+    name = models.CharField(max_length=100)  # e.g., "frontend_developer", "python_backend"
+    skill_category = models.CharField(max_length=100)
+    percentiles = models.JSONField(default=dict)  # {10: 0.3, 25: 0.45, 50: 0.6, 75: 0.75, 90: 0.88}
+    avg_hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    avg_experience_years = models.FloatField(default=0)
+    common_skills = models.JSONField(default=list)
+    sample_size = models.IntegerField(default=0)
+    is_synthetic = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['name', 'skill_category']
+
+
+class SyntheticProfile(models.Model):
+    """Synthetic freelancer profiles for benchmarking when real data is sparse"""
+    name = models.CharField(max_length=200)
+    title = models.CharField(max_length=200)
+    skills = models.JSONField(default=list)
+    experience_years = models.IntegerField(default=0)
+    hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    github_repos = models.IntegerField(default=0)
+    github_stars = models.IntegerField(default=0)
+    portfolio_score = models.FloatField(default=0)
+    overall_score = models.FloatField(default=0)
+    category = models.CharField(max_length=100)
+    source = models.CharField(max_length=100, default='generated')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AIInsight(models.Model):
+    """AI-generated insights stored from Gemini"""
+    INSIGHT_TYPES = [
+        ('market_trend', 'Market Trend'),
+        ('skill_gap', 'Skill Gap'),
+        ('career_advice', 'Career Advice'),
+        ('learning_path', 'Learning Path'),
+        ('salary_insight', 'Salary Insight'),
+        ('project_suggestion', 'Project Suggestion'),
+        ('swot_analysis', 'SWOT Analysis'),
+        ('salary_comparison', 'Salary Comparison'),
+        ('skill_demand', 'Skill Demand'),
+    ]
+    
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='ai_insights')
+    job = models.ForeignKey(IngestionJob, on_delete=models.CASCADE, related_name='insights', null=True, blank=True)
+    insight_type = models.CharField(max_length=30, choices=INSIGHT_TYPES)
+    title = models.CharField(max_length=300)
+    content = models.TextField()
+    metadata = models.JSONField(default=dict)
+    relevance_score = models.FloatField(default=0.8)
+    is_read = models.BooleanField(default=False)
+    is_bookmarked = models.BooleanField(default=False)
+    generated_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-generated_at']
+        indexes = [
+            models.Index(fields=['user', 'insight_type']),
+            models.Index(fields=['user', 'is_read']),
+        ]

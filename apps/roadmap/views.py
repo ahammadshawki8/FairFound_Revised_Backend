@@ -1,0 +1,125 @@
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from .models import RoadmapStep, Task
+from .serializers import RoadmapStepSerializer, TaskSerializer, GenerateRoadmapSerializer
+from apps.analysis.services import generate_roadmap_with_gemini
+from apps.users.models import FreelancerProfile
+
+
+class RoadmapListView(generics.ListAPIView):
+    serializer_class = RoadmapStepSerializer
+
+    def get_queryset(self):
+        return RoadmapStep.objects.filter(user=self.request.user)
+
+
+class RoadmapStepCreateView(generics.CreateAPIView):
+    serializer_class = RoadmapStepSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class RoadmapStepDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = RoadmapStepSerializer
+
+    def get_queryset(self):
+        return RoadmapStep.objects.filter(user=self.request.user)
+
+
+class GenerateRoadmapView(APIView):
+    """
+    Generate a personalized roadmap using Gemini AI.
+    Deletes existing roadmap and creates new one.
+    """
+    def post(self, request):
+        serializer = GenerateRoadmapSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        skill_gaps = serializer.validated_data['skill_gaps']
+        
+        # Get user's current skills from profile
+        user_skills = []
+        try:
+            profile = FreelancerProfile.objects.get(user=request.user)
+            user_skills = profile.skills or []
+        except FreelancerProfile.DoesNotExist:
+            pass
+        
+        # Delete existing roadmap steps for this user
+        RoadmapStep.objects.filter(user=request.user).delete()
+        
+        # Generate new roadmap with Gemini
+        steps_data = generate_roadmap_with_gemini({}, skill_gaps, user_skills)
+        
+        # Create new steps in database
+        steps = []
+        for i, step_data in enumerate(steps_data):
+            step = RoadmapStep.objects.create(
+                user=request.user, 
+                order=i,
+                title=step_data.get('title', ''),
+                description=step_data.get('description', ''),
+                duration=step_data.get('duration', '1 week'),
+                status=step_data.get('status', 'pending'),
+                type=step_data.get('type', 'skill'),
+            )
+            steps.append(step)
+        
+        return Response({
+            'message': f'Generated {len(steps)} roadmap steps',
+            'steps': RoadmapStepSerializer(steps, many=True).data
+        }, status=status.HTTP_201_CREATED)
+
+
+class RoadmapStatusView(APIView):
+    """Check if user has a roadmap and return summary"""
+    def get(self, request):
+        steps = RoadmapStep.objects.filter(user=request.user)
+        if not steps.exists():
+            return Response({
+                'has_roadmap': False,
+                'message': 'No roadmap generated yet'
+            })
+        
+        completed = steps.filter(status='completed').count()
+        in_progress = steps.filter(status='in-progress').count()
+        pending = steps.filter(status='pending').count()
+        
+        return Response({
+            'has_roadmap': True,
+            'total_steps': steps.count(),
+            'completed': completed,
+            'in_progress': in_progress,
+            'pending': pending,
+            'progress_percentage': round((completed / steps.count()) * 100) if steps.count() > 0 else 0
+        })
+
+
+class TaskListCreateView(generics.ListCreateAPIView):
+    serializer_class = TaskSerializer
+
+    def get_queryset(self):
+        return Task.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = TaskSerializer
+
+    def get_queryset(self):
+        return Task.objects.filter(user=self.request.user)
+
+
+class TaskStatusUpdateView(APIView):
+    def put(self, request, pk):
+        try:
+            task = Task.objects.get(pk=pk, user=request.user)
+            task.status = request.data.get('status', task.status)
+            task.save()
+            return Response(TaskSerializer(task).data)
+        except Task.DoesNotExist:
+            return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
