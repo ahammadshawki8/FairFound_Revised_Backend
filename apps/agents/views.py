@@ -908,8 +908,9 @@ Return ONLY valid JSON.
 """
 
 
-def generate_fallback_insight(insight_type, score_result, benchmark, llm_evaluation):
+def generate_fallback_insight(insight_type, score_result, benchmark, llm_evaluation, skills=None):
     """Generate rule-based insights when Gemini is unavailable"""
+    skills = skills or []
     tier = score_result.get('tier', 'Developing')
     percentile = benchmark.get('user_percentile', 50)
     
