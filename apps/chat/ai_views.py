@@ -214,7 +214,7 @@ User: {message}
 Assistant:"""
 
             print(f"[AI CHAT] Calling Gemini API...")
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             response = model.generate_content(full_prompt)
             
             if response.text:
@@ -323,7 +323,7 @@ User: {message}
 Assistant:"""
 
             print(f"[AI CHAT] Calling Gemini API...")
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             response = model.generate_content(full_prompt)
             
             if response.text:

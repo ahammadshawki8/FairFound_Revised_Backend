@@ -56,7 +56,7 @@ def generate_roadmap_with_gemini(profile_data, skill_gaps, user_skills=None):
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
 
         skills_str = ', '.join(user_skills) if user_skills else 'general web development'
         gaps_str = ', '.join(skill_gaps[:5])
@@ -165,7 +165,7 @@ def generate_single_step_with_gemini(skill_gaps, user_skills, existing_steps):
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
 
         skills_str = ', '.join(user_skills) if user_skills else 'general web development'
         gaps_str = ', '.join(skill_gaps[:5]) if skill_gaps else 'general improvement'
