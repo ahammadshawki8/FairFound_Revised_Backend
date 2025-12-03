@@ -1,7 +1,6 @@
 """
-AI Chatbot Views - Gemini Integration
+AI Chatbot Views - Gemini Integration for Freelancer Career Assistant
 """
-import os
 import json
 from rest_framework import status
 from rest_framework.views import APIView
@@ -17,28 +16,47 @@ except ImportError:
     GEMINI_AVAILABLE = False
 
 
-# Configure Gemini
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
-if GEMINI_AVAILABLE and GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+def get_gemini_api_key():
+    """Get Gemini API key from Django settings"""
+    return getattr(settings, 'GEMINI_API_KEY', '') or ''
 
 
-SYSTEM_PROMPT = """You are a helpful AI assistant for FairFound, a platform that helps freelancers grow their careers through AI-powered insights, mentorship, and community support.
+def get_configured_model():
+    """Get a configured Gemini model instance"""
+    api_key = get_gemini_api_key()
+    if GEMINI_AVAILABLE and api_key and api_key not in ['', 'your-gemini-api-key']:
+        genai.configure(api_key=api_key)
+        return genai.GenerativeModel('gemini-2.0-flash')
+    return None
 
-Your capabilities:
-- Help users understand the platform features
-- Provide career advice for freelancers
-- Answer questions about freelancing, pricing, portfolios, and client management
-- Give personalized recommendations based on user context
-- Explain technical concepts in simple terms
 
-Rules:
-1. Be concise and helpful (keep responses under 150 words unless more detail is needed)
-2. Reference the current page context when relevant
-3. Provide actionable advice
-4. Be encouraging but realistic
-5. If you don't know something, say so honestly
-6. Never make up information about the user's data
+SYSTEM_PROMPT = """You are FairFound AI, an expert freelance career coach and assistant. You help freelancers succeed in their careers with practical, actionable advice.
+
+Your expertise includes:
+- Freelance pricing strategies and rate negotiation
+- Portfolio optimization and project showcasing
+- Client acquisition and relationship management
+- Skill development roadmaps for developers
+- Personal branding and online presence
+- Proposal writing and pitching techniques
+- Time management and productivity for freelancers
+- Contract negotiation and scope management
+- Building passive income streams
+- Transitioning from employment to freelancing
+
+Personality:
+- Supportive but direct - give honest feedback
+- Data-driven - reference market rates and industry trends
+- Action-oriented - always provide specific next steps
+- Encouraging - celebrate wins and progress
+
+Response Guidelines:
+1. Keep responses concise (100-200 words) unless detailed explanation needed
+2. Use bullet points for actionable items
+3. Reference the user's skills/experience when giving advice
+4. Provide specific examples and numbers when discussing rates
+5. If asked about the platform, explain FairFound features helpfully
+6. For technical questions outside freelancing, briefly answer then redirect to career growth
 """
 
 
@@ -173,82 +191,190 @@ class AIChatView(APIView):
 
     def _get_gemini_response(self, message, page_context, history, user):
         """Get response from Gemini API"""
-        print(f"[AI CHAT] GEMINI_AVAILABLE: {GEMINI_AVAILABLE}, API_KEY set: {bool(GEMINI_API_KEY)}")
+        model = get_configured_model()
         
-        if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
-            print("[AI CHAT] Falling back to rule-based responses")
+        if not model:
+            print("[AI CHAT] Gemini not available, using fallback")
             return self._get_fallback_response(message)
 
         try:
-            # Build context with user info
-            user_context = f"User: {user.username}"
-            try:
-                from apps.users.models import FreelancerProfile
-                profile = FreelancerProfile.objects.filter(user=user).first()
-                if profile:
-                    if profile.title:
-                        user_context += f", Role: {profile.title}"
-                    if profile.skills:
-                        user_context += f", Skills: {', '.join(profile.skills[:5])}"
-                    if profile.experience_years:
-                        user_context += f", Experience: {profile.experience_years} years"
-            except Exception as e:
-                print(f"[AI CHAT] Error getting profile: {e}")
+            # Build rich user context
+            user_context = self._build_user_context(user)
 
             # Build conversation history
             history_text = ""
-            for h in history[-10:]:  # Last 10 messages for context
+            for h in history[-10:]:
                 history_text += f"{h['role'].capitalize()}: {h['content']}\n"
 
             # Build full prompt
             full_prompt = f"""{SYSTEM_PROMPT}
 
+USER PROFILE:
 {user_context}
 
-Current page context: {page_context or 'General'}
+CURRENT PAGE: {page_context or 'Dashboard'}
 
-Previous conversation:
+CONVERSATION HISTORY:
 {history_text}
 
-User: {message}
-Assistant:"""
+USER MESSAGE: {message}
 
-            print(f"[AI CHAT] Calling Gemini API...")
-            model = genai.GenerativeModel('gemini-2.0-flash')
+Provide a helpful, personalized response:"""
+
+            print(f"[AI CHAT] Calling Gemini API with user context...")
             response = model.generate_content(full_prompt)
             
             if response.text:
-                print(f"[AI CHAT] Got Gemini response: {response.text[:100]}...")
+                print(f"[AI CHAT] ✅ Gemini response received")
                 return response.text.strip()
-            return "I'm sorry, I couldn't process that. Could you try rephrasing?"
+            return "I couldn't process that request. Could you try rephrasing your question?"
 
         except Exception as e:
-            print(f"[AI CHAT] Gemini API Error: {e}")
+            print(f"[AI CHAT] ❌ Gemini API Error: {e}")
             return self._get_fallback_response(message)
+    
+    def _build_user_context(self, user):
+        """Build detailed user context for personalized responses"""
+        context_parts = [f"Username: {user.username}"]
+        
+        try:
+            from apps.users.models import FreelancerProfile
+            from apps.agents.models import IngestionJob
+            
+            profile = FreelancerProfile.objects.filter(user=user).first()
+            if profile:
+                if profile.title:
+                    context_parts.append(f"Title: {profile.title}")
+                if profile.skills:
+                    context_parts.append(f"Skills: {', '.join(profile.skills[:8])}")
+                if profile.experience_years:
+                    context_parts.append(f"Experience: {profile.experience_years} years")
+                if profile.hourly_rate:
+                    context_parts.append(f"Current Rate: ${profile.hourly_rate}/hr")
+                if profile.bio:
+                    context_parts.append(f"Bio: {profile.bio[:200]}")
+            
+            # Get latest analysis data
+            latest_job = IngestionJob.objects.filter(user=user, status='done').first()
+            if latest_job and latest_job.result:
+                result = latest_job.result
+                score = result.get('score_result', {})
+                if score.get('tier'):
+                    context_parts.append(f"Skill Tier: {score.get('tier')}")
+                if score.get('overall_score'):
+                    context_parts.append(f"Readiness Score: {int(score.get('overall_score', 0) * 100)}%")
+                benchmark = result.get('benchmark', {})
+                if benchmark.get('user_percentile'):
+                    context_parts.append(f"Market Percentile: {benchmark.get('user_percentile')}th")
+                    
+        except Exception as e:
+            print(f"[AI CHAT] Error building context: {e}")
+        
+        return "\n".join(context_parts)
 
     def _get_fallback_response(self, message):
-        """Fallback responses when Gemini is unavailable"""
+        """Smart fallback responses when Gemini is unavailable"""
         lower_msg = message.lower()
         
-        if any(word in lower_msg for word in ['roadmap', 'task', 'plan']):
-            return "Based on your current roadmap, I recommend focusing on completing your pending tasks first. Your next step should be to work on the skills marked as 'in-progress'. Would you like specific tips on any particular task?"
-        
-        if any(word in lower_msg for word in ['mentor', 'mentorship', 'coach']):
-            return "Looking at your profile, connecting with a mentor could accelerate your growth significantly. I'd suggest browsing mentors who specialize in your skill gaps. Would you like me to explain what to look for in a mentor?"
-        
-        if any(word in lower_msg for word in ['portfolio', 'project', 'work']):
-            return "Your portfolio is key to landing clients. I suggest adding more case studies with measurable outcomes. Would you like tips on how to present your projects effectively?"
-        
-        if any(word in lower_msg for word in ['price', 'rate', 'earning', 'money', 'charge']):
-            return "Based on your skills and experience, you might be undercharging. Consider researching market rates for your specialty and gradually increasing your rates as you build your portfolio."
-        
-        if any(word in lower_msg for word in ['help', 'what can you do', 'features']):
-            return "I'm your AI assistant! I can help you understand the platform, give career advice, explain features, and provide personalized recommendations for your freelance journey. Just ask me anything!"
-        
-        if any(word in lower_msg for word in ['hello', 'hi', 'hey']):
-            return "Hello! I'm here to help you navigate FairFound and grow your freelance career. What would you like to know?"
-        
-        return "I'm here to help you navigate FairFound and grow your freelance career. Is there something specific you'd like to know more about?"
+        # Pricing & Rates
+        if any(word in lower_msg for word in ['price', 'rate', 'earning', 'money', 'charge', 'hourly', 'salary']):
+            return """**Pricing Strategy Tips:**
+
+• Research competitors on Upwork/Fiverr in your niche
+• Start at market rate, increase 10-15% every 3-6 months
+• Value-based pricing often beats hourly for experienced freelancers
+• Junior devs: $25-45/hr, Mid-level: $50-85/hr, Senior: $100+/hr
+
+**Quick wins to justify higher rates:**
+- Add case studies with ROI metrics
+- Get client testimonials
+- Specialize in a high-demand niche"""
+
+        # Roadmap & Learning
+        if any(word in lower_msg for word in ['roadmap', 'task', 'plan', 'learn', 'skill']):
+            return """**Your Learning Roadmap:**
+
+Focus on completing tasks in order - each builds on the previous. Here's my advice:
+
+• **Prioritize**: Finish 'in-progress' items before starting new ones
+• **Practice**: Build mini-projects for each skill you learn
+• **Document**: Add completed projects to your portfolio immediately
+
+Check your Roadmap page for personalized next steps based on your skill gaps!"""
+
+        # Mentorship
+        if any(word in lower_msg for word in ['mentor', 'mentorship', 'coach', 'guidance']):
+            return """**Finding the Right Mentor:**
+
+A good mentor can accelerate your growth by 2-3x. Look for:
+
+• **Relevant experience**: Someone who's done what you want to do
+• **Communication style**: Regular check-ins work best
+• **Actionable feedback**: They should give specific, practical advice
+
+Browse our Mentors page - filter by your skill gaps for best matches!"""
+
+        # Portfolio
+        if any(word in lower_msg for word in ['portfolio', 'project', 'showcase', 'work']):
+            return """**Portfolio Optimization Tips:**
+
+Your portfolio is your #1 sales tool. Make it count:
+
+• **Quality > Quantity**: 3-5 excellent projects beat 10 mediocre ones
+• **Show process**: Include problem → solution → results
+• **Add metrics**: "Increased conversion by 40%" beats "Built a website"
+• **Live demos**: Working links are essential
+
+Use our Portfolio Builder to create compelling case studies!"""
+
+        # Clients
+        if any(word in lower_msg for word in ['client', 'customer', 'proposal', 'pitch', 'job']):
+            return """**Client Acquisition Strategy:**
+
+• **Niche down**: Specialists earn 2-3x more than generalists
+• **Warm outreach**: LinkedIn connections convert better than cold emails
+• **Show don't tell**: Send a quick audit or suggestion with your pitch
+• **Follow up**: 80% of deals close after 5+ touchpoints
+
+Pro tip: Your best clients come from referrals - always ask happy clients!"""
+
+        # Greetings
+        if any(word in lower_msg for word in ['hello', 'hi', 'hey', 'start']):
+            return """Hey there! 👋 I'm your FairFound AI assistant.
+
+I can help you with:
+• **Pricing** - What to charge for your services
+• **Portfolio** - How to showcase your work
+• **Skills** - What to learn next
+• **Clients** - How to find and keep them
+• **Mentorship** - Finding the right guidance
+
+What would you like to work on today?"""
+
+        # Help
+        if any(word in lower_msg for word in ['help', 'what can you', 'feature', 'how do']):
+            return """**I'm here to help you succeed as a freelancer!**
+
+Ask me about:
+• 💰 Pricing strategies and rate negotiation
+• 📁 Portfolio optimization
+• 🎯 Skill development roadmaps
+• 🤝 Client acquisition techniques
+• 👨‍🏫 Finding the right mentor
+• 📈 Growing your freelance business
+
+Just type your question and I'll give you actionable advice!"""
+
+        # Default
+        return """I'm your freelance career assistant! I can help with:
+
+• Pricing and rates
+• Portfolio building
+• Skill development
+• Client acquisition
+• Career strategy
+
+What specific challenge are you facing today?"""
 
 
 class AIClearHistoryView(APIView):
@@ -277,84 +403,10 @@ class AIQuickChatView(APIView):
         if not message:
             return Response({'error': 'Message is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get AI response
-        response = self._get_gemini_response(message, page_context, history, request.user)
+        # Get AI response using shared logic
+        chat_view = AIChatView()
+        response = chat_view._get_gemini_response(message, page_context, history, request.user)
         
         return Response({
             'response': response
         })
-
-    def _get_gemini_response(self, message, page_context, history, user):
-        """Get response from Gemini API"""
-        print(f"[AI CHAT] GEMINI_AVAILABLE: {GEMINI_AVAILABLE}, API_KEY set: {bool(GEMINI_API_KEY)}")
-        
-        if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
-            print("[AI CHAT] Falling back to rule-based responses")
-            return self._get_fallback_response(message)
-
-        try:
-            # Build user context
-            user_context = f"User: {user.username}"
-            try:
-                from apps.users.models import FreelancerProfile
-                profile = FreelancerProfile.objects.filter(user=user).first()
-                if profile:
-                    if profile.title:
-                        user_context += f", Role: {profile.title}"
-                    if profile.skills:
-                        user_context += f", Skills: {', '.join(profile.skills[:5])}"
-                    if profile.experience_years:
-                        user_context += f", Experience: {profile.experience_years} years"
-            except Exception as e:
-                print(f"[AI CHAT] Error getting profile: {e}")
-
-            history_text = "\n".join([f"{h['role'].capitalize()}: {h['content']}" for h in history[-10:]])
-
-            full_prompt = f"""{SYSTEM_PROMPT}
-
-{user_context}
-
-Current page context: {page_context or 'General'}
-
-Previous conversation:
-{history_text}
-
-User: {message}
-Assistant:"""
-
-            print(f"[AI CHAT] Calling Gemini API...")
-            model = genai.GenerativeModel('gemini-2.0-flash')
-            response = model.generate_content(full_prompt)
-            
-            if response.text:
-                print(f"[AI CHAT] Got Gemini response: {response.text[:100]}...")
-                return response.text.strip()
-            return "I'm sorry, I couldn't process that. Could you try rephrasing?"
-
-        except Exception as e:
-            print(f"[AI CHAT] Gemini API Error: {e}")
-            return self._get_fallback_response(message)
-
-    def _get_fallback_response(self, message):
-        """Fallback responses when Gemini is unavailable"""
-        lower_msg = message.lower()
-        
-        if any(word in lower_msg for word in ['roadmap', 'task', 'plan']):
-            return "Based on your current roadmap, I recommend focusing on completing your pending tasks first. Would you like specific tips on any particular task?"
-        
-        if any(word in lower_msg for word in ['mentor', 'mentorship']):
-            return "Connecting with a mentor could accelerate your growth significantly. Browse mentors who specialize in your skill gaps!"
-        
-        if any(word in lower_msg for word in ['portfolio', 'project']):
-            return "Your portfolio is key to landing clients. Add case studies with measurable outcomes for best results."
-        
-        if any(word in lower_msg for word in ['price', 'rate', 'earning']):
-            return "Research market rates for your specialty and gradually increase your rates as you build your portfolio."
-        
-        if any(word in lower_msg for word in ['help', 'what can you do']):
-            return "I'm your AI assistant! I can help with career advice, explain features, and provide personalized recommendations."
-        
-        if any(word in lower_msg for word in ['hello', 'hi', 'hey']):
-            return "Hello! I'm here to help you grow your freelance career. What would you like to know?"
-        
-        return "I'm here to help you navigate FairFound. Is there something specific you'd like to know?"
