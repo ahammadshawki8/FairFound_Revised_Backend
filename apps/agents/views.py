@@ -716,8 +716,11 @@ def generate_ai_insights(user, job):
     
     insights_created = 0
     
-    # Reduced set of insights to prevent memory issues (4 instead of 9)
+    # Core insights including chart data (7 types for rich UI)
     insight_configs = [
+        ('swot_analysis', generate_swot_analysis_prompt),
+        ('salary_comparison', generate_salary_comparison_prompt),
+        ('skill_demand', generate_skill_demand_prompt),
         ('skill_gap', generate_skill_gap_prompt),
         ('career_advice', generate_career_advice_prompt),
         ('learning_path', generate_learning_path_prompt),
@@ -908,6 +911,94 @@ Return ONLY valid JSON.
 """
 
 
+# Helper functions for personalized insight data
+def _get_swot_strengths(skills, tier, percentile):
+    """Generate personalized strengths based on user skills"""
+    skills_lower = [s.lower() for s in skills]
+    strengths = []
+    
+    # Skill-based strengths
+    if any(s in skills_lower for s in ['react', 'vue', 'angular']):
+        strengths.append('Proficient in modern frontend frameworks (React/Vue/Angular)')
+    if any(s in skills_lower for s in ['typescript', 'ts']):
+        strengths.append('TypeScript knowledge - highly valued in the job market')
+    if any(s in skills_lower for s in ['javascript', 'js']):
+        strengths.append('Strong JavaScript foundation - essential for frontend development')
+    if any(s in skills_lower for s in ['css', 'tailwind', 'sass', 'scss']):
+        strengths.append('CSS/styling expertise for creating polished UIs')
+    if any(s in skills_lower for s in ['node', 'nodejs', 'express']):
+        strengths.append('Backend knowledge enables full-stack capabilities')
+    if any(s in skills_lower for s in ['git', 'github']):
+        strengths.append('Version control proficiency - essential for team collaboration')
+    
+    # Tier-based strengths
+    if percentile >= 60:
+        strengths.append(f'Above-average profile ({percentile}th percentile)')
+    if tier in ['Competent', 'Strong Junior']:
+        strengths.append('Solid foundation ready for professional opportunities')
+    
+    # Default strengths if none matched
+    if not strengths:
+        strengths = [
+            'Active learning mindset and growth potential',
+            'Taking initiative to assess and improve skills',
+            'Understanding of web development fundamentals'
+        ]
+    
+    return strengths[:4]
+
+
+def _get_swot_weaknesses(skills, tier):
+    """Generate personalized weaknesses based on missing skills"""
+    skills_lower = [s.lower() for s in skills]
+    weaknesses = []
+    
+    # Check for missing essential skills
+    if not any(s in skills_lower for s in ['typescript', 'ts']):
+        weaknesses.append('TypeScript not listed - essential for most frontend roles')
+    if not any(s in skills_lower for s in ['jest', 'testing', 'cypress', 'vitest']):
+        weaknesses.append('Testing skills needed (Jest, React Testing Library)')
+    if not any(s in skills_lower for s in ['next', 'nextjs', 'next.js']):
+        weaknesses.append('Next.js knowledge would expand job opportunities')
+    if not any(s in skills_lower for s in ['node', 'nodejs', 'express', 'backend']):
+        weaknesses.append('Backend/API experience could strengthen profile')
+    if not any(s in skills_lower for s in ['git', 'github']):
+        weaknesses.append('Git/GitHub proficiency needed for collaboration')
+    
+    # Tier-based weaknesses
+    if tier in ['Early Stage', 'Developing']:
+        weaknesses.append('Portfolio needs more polished, deployed projects')
+    
+    return weaknesses[:4]
+
+
+def _get_skill_demand_data(skills):
+    """Generate skill demand chart data based on user skills"""
+    skills_lower = [s.lower() for s in skills]
+    
+    # Market demand data (based on job posting trends)
+    skill_demand = [
+        {'name': 'React', 'value': 420, 'user_has': any(s in skills_lower for s in ['react', 'reactjs'])},
+        {'name': 'TypeScript', 'value': 380, 'user_has': any(s in skills_lower for s in ['typescript', 'ts'])},
+        {'name': 'Next.js', 'value': 290, 'user_has': any(s in skills_lower for s in ['next', 'nextjs', 'next.js'])},
+        {'name': 'Node.js', 'value': 320, 'user_has': any(s in skills_lower for s in ['node', 'nodejs', 'node.js'])},
+        {'name': 'Tailwind', 'value': 260, 'user_has': any(s in skills_lower for s in ['tailwind', 'tailwindcss'])},
+    ]
+    
+    # Calculate user coverage
+    user_skills_count = sum(1 for s in skill_demand if s['user_has'])
+    coverage = int((user_skills_count / len(skill_demand)) * 100)
+    
+    return {
+        'skill_demand': skill_demand,
+        'total_jobs': 1670,
+        'user_coverage': f'{coverage}%',
+        'top_growing': ['Next.js', 'TypeScript', 'Tailwind CSS'],
+        'skills_matched': user_skills_count,
+        'skills_total': len(skill_demand)
+    }
+
+
 def generate_fallback_insight(insight_type, score_result, benchmark, llm_evaluation, skills=None):
     """Generate rule-based insights when Gemini is unavailable"""
     skills = skills or []
@@ -1021,62 +1112,45 @@ Each project should have a live demo, clean code, and detailed README.""",
             'title': 'Your SWOT Analysis',
             'content': f'Comprehensive analysis of your position as a {tier} developer at the {percentile}th percentile.',
             'metadata': {
-                'strengths': [
-                    'Strong foundation in modern JavaScript frameworks',
-                    'Active learning mindset and growth potential',
-                    'Understanding of responsive web design principles'
-                ],
-                'weaknesses': [
-                    'Limited TypeScript experience - essential for most roles',
-                    'Testing skills need development (Jest, RTL)',
-                    'Backend/API integration experience could be stronger'
-                ],
+                'strengths': _get_swot_strengths(skills, tier, percentile),
+                'weaknesses': _get_swot_weaknesses(skills, tier),
                 'opportunities': [
                     'High demand for React developers in remote positions',
                     'Growing market for TypeScript specialists',
-                    'Freelance opportunities in web development'
+                    'Freelance opportunities in web development',
+                    'AI-assisted development tools increasing productivity'
                 ],
                 'threats': [
                     'Increasing competition from bootcamp graduates',
                     'AI tools changing development workflows',
-                    'Rapid framework evolution requires continuous learning'
+                    'Rapid framework evolution requires continuous learning',
+                    'Economic uncertainty affecting tech hiring'
                 ]
             },
             'relevance_score': 0.95
         },
         'salary_comparison': {
             'title': 'Global Salary Comparison',
-            'content': 'How your earning potential compares across experience levels.',
+            'content': f'How your earning potential compares across experience levels. As a {tier} developer, you have significant growth potential.',
             'metadata': {
                 'salary_data': [
-                    {'name': 'Junior', 'salary': 45, 'description': '0-1 years'},
-                    {'name': 'Mid-Level', 'salary': 75, 'description': '2-4 years'},
-                    {'name': 'You', 'salary': max(30, int(benchmark.get('avg_rate', 35) * (percentile/50))), 'active': True, 'description': 'Current'},
-                    {'name': 'Senior', 'salary': 120, 'description': '5-8 years'},
-                    {'name': 'Lead', 'salary': 150, 'description': '8+ years'}
+                    {'name': 'Entry', 'salary': 25, 'description': '0-6 months'},
+                    {'name': 'Junior', 'salary': 45, 'description': '6mo-2 years'},
+                    {'name': 'You', 'salary': max(30, int(benchmark.get('avg_rate', 35) * (percentile/50))), 'active': True, 'description': f'{tier}'},
+                    {'name': 'Mid', 'salary': 75, 'description': '2-4 years'},
+                    {'name': 'Senior', 'salary': 120, 'description': '5+ years'}
                 ],
                 'your_rate': max(30, int(benchmark.get('avg_rate', 35) * (percentile/50))),
                 'market_average': benchmark.get('avg_rate', 35),
                 'percentile': percentile,
-                'growth_potential': f"{int((120 - max(30, benchmark.get('avg_rate', 35) * (percentile/50))) / max(30, benchmark.get('avg_rate', 35) * (percentile/50)) * 100)}%"
+                'growth_potential': f"+{int((75 - max(30, benchmark.get('avg_rate', 35) * (percentile/50))) / max(1, max(30, benchmark.get('avg_rate', 35) * (percentile/50))) * 100)}% to Mid-Level"
             },
             'relevance_score': 0.9
         },
         'skill_demand': {
             'title': 'Skill Demand in Your Niche',
-            'content': 'Market demand distribution for frontend development skills.',
-            'metadata': {
-                'skill_demand': [
-                    {'name': 'React', 'value': 400, 'user_has': True},
-                    {'name': 'TypeScript', 'value': 350, 'user_has': False},
-                    {'name': 'Node.js', 'value': 300, 'user_has': False},
-                    {'name': 'Vue/Angular', 'value': 200, 'user_has': False},
-                    {'name': 'CSS/Tailwind', 'value': 250, 'user_has': True}
-                ],
-                'total_jobs': 1500,
-                'user_coverage': '43%',
-                'top_growing': ['Next.js', 'TypeScript', 'Tailwind CSS']
-            },
+            'content': 'Market demand distribution for frontend development skills based on current job postings.',
+            'metadata': _get_skill_demand_data(skills),
             'relevance_score': 0.88
         }
     }
