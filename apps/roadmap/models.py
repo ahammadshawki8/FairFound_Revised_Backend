@@ -12,6 +12,7 @@ class RoadmapStep(models.Model):
     duration = models.CharField(max_length=50)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='skill')
+    resources = models.JSONField(default=list, blank=True)  # Learning resources with URLs
     mentor_approved = models.BooleanField(default=False)
     mentor_notes = models.TextField(blank=True)
     order = models.IntegerField(default=0)

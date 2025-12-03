@@ -78,6 +78,7 @@ class GenerateRoadmapView(APIView):
                 duration=step_data.get('duration', '1 week'),
                 status=step_data.get('status', 'pending'),
                 type=step_data.get('type', 'skill'),
+                resources=step_data.get('resources', []),
             )
             steps.append(step)
             

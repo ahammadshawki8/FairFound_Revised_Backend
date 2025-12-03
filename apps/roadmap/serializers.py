@@ -15,7 +15,7 @@ class RoadmapStepSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RoadmapStep
-        fields = ['id', 'title', 'description', 'duration', 'status', 'type', 'mentor_approved', 'mentor_notes', 'order', 'tasks', 'created_at']
+        fields = ['id', 'title', 'description', 'duration', 'status', 'type', 'resources', 'mentor_approved', 'mentor_notes', 'order', 'tasks', 'created_at']
 
 
 class GenerateRoadmapSerializer(serializers.Serializer):
