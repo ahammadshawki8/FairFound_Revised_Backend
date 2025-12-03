@@ -87,3 +87,54 @@ def create_notification(user, title, message, notification_type='info'):
         message=message,
         type=notification_type
     )
+
+
+class BulkNotificationView(APIView):
+    """Send notifications to multiple mentees (mentor only)"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role != 'mentor':
+            return Response({'error': 'Not a mentor'}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            from apps.users.models import MentorProfile, FreelancerProfile, User
+            
+            mentor_profile = MentorProfile.objects.get(user=request.user)
+            mentee_ids = request.data.get('mentee_ids', [])
+            title = request.data.get('title', 'Message from your mentor')
+            message = request.data.get('message', '')
+            notification_type = request.data.get('type', 'info')
+            
+            if not message:
+                return Response({'error': 'Message is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get mentees connected to this mentor
+            if mentee_ids:
+                # Send to specific mentees
+                mentees = FreelancerProfile.objects.filter(
+                    connected_mentor=mentor_profile,
+                    id__in=mentee_ids
+                )
+            else:
+                # Send to all mentees
+                mentees = FreelancerProfile.objects.filter(connected_mentor=mentor_profile)
+            
+            created_count = 0
+            for mentee in mentees:
+                Notification.objects.create(
+                    user=mentee.user,
+                    title=title,
+                    message=message,
+                    type=notification_type
+                )
+                created_count += 1
+            
+            return Response({
+                'message': f'Notification sent to {created_count} mentee(s)',
+                'count': created_count
+            }, status=status.HTTP_201_CREATED)
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

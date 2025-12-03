@@ -68,6 +68,7 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
             mentor = obj.connected_mentor
             return {
                 'id': mentor.id,
+                'user_id': mentor.user.id,
                 'name': mentor.user.username,
                 'title': mentor.title,
                 'company': mentor.company,
@@ -81,14 +82,15 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
 
 class MentorProfileSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='user.username', read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     image_url = serializers.SerializerMethodField()
     mentee_count = serializers.SerializerMethodField()
 
     class Meta:
         model = MentorProfile
-        fields = ['id', 'name', 'image_url', 'title', 'company', 'bio', 'specialties', 'rate', 
+        fields = ['id', 'user_id', 'name', 'image_url', 'title', 'company', 'bio', 'specialties', 'rate', 
                   'rating', 'total_reviews', 'is_available', 'session_duration', 'timezone', 'mentee_count']
-        read_only_fields = ['id', 'rating', 'total_reviews']
+        read_only_fields = ['id', 'user_id', 'rating', 'total_reviews']
 
     def get_image_url(self, obj):
         if obj.user.avatar:

@@ -25,15 +25,27 @@ class RoadmapStepDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = RoadmapStepSerializer
 
     def get_queryset(self):
-        return RoadmapStep.objects.filter(user=self.request.user)
+        user = self.request.user
+        if user.role == 'mentor':
+            # Mentors can access steps of their mentees
+            from apps.users.models import MentorProfile
+            try:
+                mentor_profile = MentorProfile.objects.get(user=user)
+                mentee_users = FreelancerProfile.objects.filter(connected_mentor=mentor_profile).values_list('user', flat=True)
+                return RoadmapStep.objects.filter(user__in=mentee_users)
+            except MentorProfile.DoesNotExist:
+                return RoadmapStep.objects.none()
+        return RoadmapStep.objects.filter(user=user)
 
 
 class GenerateRoadmapView(APIView):
     """
-    Generate a personalized roadmap using Gemini AI.
+    Generate a personalized roadmap with tasks using Gemini AI.
     Deletes existing roadmap and creates new one.
     """
     def post(self, request):
+        from datetime import date, timedelta
+        
         serializer = GenerateRoadmapSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -47,14 +59,16 @@ class GenerateRoadmapView(APIView):
         except FreelancerProfile.DoesNotExist:
             pass
         
-        # Delete existing roadmap steps for this user
+        # Delete existing roadmap steps and tasks for this user
+        Task.objects.filter(user=request.user).delete()
         RoadmapStep.objects.filter(user=request.user).delete()
         
-        # Generate new roadmap with Gemini
+        # Generate new roadmap with Gemini (now includes tasks)
         steps_data = generate_roadmap_with_gemini({}, skill_gaps, user_skills)
         
-        # Create new steps in database
+        # Create new steps and tasks in database
         steps = []
+        total_tasks = 0
         for i, step_data in enumerate(steps_data):
             step = RoadmapStep.objects.create(
                 user=request.user, 
@@ -66,9 +80,22 @@ class GenerateRoadmapView(APIView):
                 type=step_data.get('type', 'skill'),
             )
             steps.append(step)
+            
+            # Create tasks for this step
+            tasks_data = step_data.get('tasks', [])
+            for j, task_data in enumerate(tasks_data):
+                Task.objects.create(
+                    user=request.user,
+                    step=step,
+                    title=task_data.get('title', f'Task {j+1}'),
+                    description=task_data.get('description', ''),
+                    due_date=date.today() + timedelta(days=7 * (i + 1) + j * 2),
+                    status='pending',
+                )
+                total_tasks += 1
         
         return Response({
-            'message': f'Generated {len(steps)} roadmap steps',
+            'message': f'Generated {len(steps)} roadmap steps with {total_tasks} tasks',
             'steps': RoadmapStepSerializer(steps, many=True).data
         }, status=status.HTTP_201_CREATED)
 
@@ -111,7 +138,17 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = TaskSerializer
 
     def get_queryset(self):
-        return Task.objects.filter(user=self.request.user)
+        user = self.request.user
+        if user.role == 'mentor':
+            # Mentors can access tasks of their mentees
+            from apps.users.models import MentorProfile, FreelancerProfile
+            try:
+                mentor_profile = MentorProfile.objects.get(user=user)
+                mentee_users = FreelancerProfile.objects.filter(connected_mentor=mentor_profile).values_list('user', flat=True)
+                return Task.objects.filter(user__in=mentee_users)
+            except MentorProfile.DoesNotExist:
+                return Task.objects.none()
+        return Task.objects.filter(user=user)
 
 
 class TaskStatusUpdateView(APIView):

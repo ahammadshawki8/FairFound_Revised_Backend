@@ -43,7 +43,9 @@ class MentorProfile(models.Model):
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     total_reviews = models.IntegerField(default=0)
     is_available = models.BooleanField(default=True)
-    session_duration = models.IntegerField(default=60)
-    timezone = models.CharField(max_length=50, default='UTC')
+    session_duration = models.IntegerField(default=45)
+    timezone = models.CharField(max_length=50, default='America/New_York')
+    # Availability slots: [{"day": "monday", "startTime": "09:00", "endTime": "17:00"}, ...]
+    availability_slots = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

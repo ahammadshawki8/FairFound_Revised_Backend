@@ -47,13 +47,74 @@ class MentorReviewListView(generics.ListCreateAPIView):
 class ConnectMentorView(APIView):
     def post(self, request, pk):
         try:
+            from apps.analysis.services import generate_roadmap_with_gemini
+            from apps.roadmap.models import RoadmapStep, Task
+            from datetime import date, timedelta
+            
             mentor = MentorProfile.objects.get(pk=pk)
             profile = FreelancerProfile.objects.get(user=request.user)
             profile.connected_mentor = mentor
             profile.save()
             request.user.is_pro = True
             request.user.save()
-            return Response({'message': 'Connected successfully'})
+            
+            # Generate personalized roadmap with tasks using Gemini
+            user_skills = profile.skills or []
+            # Get skill gaps from latest analysis if available
+            skill_gaps = []
+            try:
+                from apps.agents.models import AgentRun
+                latest_run = AgentRun.objects.filter(user=request.user).order_by('-created_at').first()
+                if latest_run and latest_run.benchmark_result:
+                    skill_gaps = latest_run.benchmark_result.get('market_insights', {}).get('skill_gaps', [])
+            except:
+                pass
+            
+            # Use default skill gaps if none found
+            if not skill_gaps:
+                skill_gaps = ['Advanced React', 'TypeScript', 'System Design']
+            
+            # Delete existing roadmap and tasks
+            Task.objects.filter(user=request.user).delete()
+            RoadmapStep.objects.filter(user=request.user).delete()
+            
+            # Generate new roadmap with Gemini (includes tasks)
+            steps_data = generate_roadmap_with_gemini({}, skill_gaps, user_skills)
+            
+            created_steps = []
+            total_tasks = 0
+            for i, step_data in enumerate(steps_data):
+                step = RoadmapStep.objects.create(
+                    user=request.user,
+                    order=i,
+                    title=step_data.get('title', ''),
+                    description=step_data.get('description', ''),
+                    duration=step_data.get('duration', '1 week'),
+                    status=step_data.get('status', 'pending'),
+                    type=step_data.get('type', 'skill'),
+                    mentor_approved=True,
+                )
+                created_steps.append(step)
+                
+                # Create tasks for this step
+                tasks_data = step_data.get('tasks', [])
+                for j, task_data in enumerate(tasks_data):
+                    Task.objects.create(
+                        user=request.user,
+                        step=step,
+                        title=task_data.get('title', f'Task {j+1}'),
+                        description=task_data.get('description', ''),
+                        due_date=date.today() + timedelta(days=7 * (i + 1) + j * 2),
+                        status='pending',
+                    )
+                    total_tasks += 1
+            
+            return Response({
+                'message': 'Connected successfully',
+                'roadmap_generated': True,
+                'steps_count': len(created_steps),
+                'tasks_count': total_tasks
+            })
         except MentorProfile.DoesNotExist:
             return Response({'error': 'Mentor not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -67,6 +128,46 @@ class DisconnectMentorView(APIView):
             return Response({'message': 'Disconnected successfully'})
         except FreelancerProfile.DoesNotExist:
             return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MentorAvailabilityView(APIView):
+    """Get or update mentor's availability settings"""
+    
+    def get(self, request):
+        if request.user.role != 'mentor':
+            return Response({'error': 'Not a mentor'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            profile = MentorProfile.objects.get(user=request.user)
+            return Response({
+                'slots': profile.availability_slots or [],
+                'session_duration': profile.session_duration,
+                'timezone': profile.timezone,
+            })
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    def put(self, request):
+        if request.user.role != 'mentor':
+            return Response({'error': 'Not a mentor'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            profile = MentorProfile.objects.get(user=request.user)
+            
+            if 'slots' in request.data:
+                profile.availability_slots = request.data['slots']
+            if 'session_duration' in request.data:
+                profile.session_duration = request.data['session_duration']
+            if 'timezone' in request.data:
+                profile.timezone = request.data['timezone']
+            
+            profile.save()
+            return Response({
+                'message': 'Availability updated successfully',
+                'slots': profile.availability_slots,
+                'session_duration': profile.session_duration,
+                'timezone': profile.timezone,
+            })
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 # Mentee views (for mentors)
@@ -83,6 +184,8 @@ class MenteeListView(APIView):
                 mentee_data['user_id'] = mentee.user.id
                 mentee_data['roadmap'] = RoadmapStepSerializer(RoadmapStep.objects.filter(user=mentee.user), many=True).data
                 mentee_data['tasks'] = TaskSerializer(Task.objects.filter(user=mentee.user), many=True).data
+                # Include analysis data
+                mentee_data['analysis'] = _get_mentee_analysis(mentee.user)
                 data.append(mentee_data)
             return Response(data)
         except MentorProfile.DoesNotExist:
@@ -102,9 +205,41 @@ class MenteeDetailView(APIView):
             data['user_id'] = mentee.user.id
             data['roadmap'] = RoadmapStepSerializer(RoadmapStep.objects.filter(user=mentee.user), many=True).data
             data['tasks'] = TaskSerializer(Task.objects.filter(user=mentee.user), many=True).data
+            # Include analysis data
+            data['analysis'] = _get_mentee_analysis(mentee.user)
             return Response(data)
         except FreelancerProfile.DoesNotExist:
             return Response({'error': 'Mentee not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+def _get_mentee_analysis(user):
+    """Get analysis data for a mentee from their latest agent run"""
+    try:
+        from apps.agents.models import AgentRun
+        latest_run = AgentRun.objects.filter(user=user).order_by('-created_at').first()
+        if latest_run:
+            evaluation = latest_run.evaluation_result or {}
+            benchmark = latest_run.benchmark_result or {}
+            breakdown = latest_run.score_breakdown or {}
+            
+            return {
+                'overall_score': round((latest_run.overall_score or 0) * 100),
+                'percentile': latest_run.percentile or 0,
+                'strengths': evaluation.get('strengths', []),
+                'weaknesses': evaluation.get('areas_for_improvement', []),
+                'skill_gaps': benchmark.get('market_insights', {}).get('skill_gaps', []),
+                'summary': evaluation.get('summary', ''),
+                'market_position': evaluation.get('market_position', {}),
+                'metrics': {
+                    'portfolio_score': round((breakdown.get('portfolio_quality', {}).get('raw_score', 0.5)) * 100),
+                    'github_score': round((breakdown.get('github_activity', {}).get('raw_score', 0.5)) * 100),
+                    'skill_score': round((breakdown.get('skill_strength', {}).get('raw_score', 0.5)) * 100),
+                    'experience_score': round((breakdown.get('experience_depth', {}).get('raw_score', 0.5)) * 100),
+                }
+            }
+    except Exception as e:
+        print(f"Error getting mentee analysis: {e}")
+    return None
 
 
 class MenteeStepCreateView(APIView):
@@ -202,10 +337,11 @@ class MenteeGenerateRoadmapView(APIView):
             RoadmapStep.objects.filter(user=mentee_user).delete()
             Task.objects.filter(user=mentee_user).delete()
             
-            # Generate new roadmap
+            # Generate new roadmap with Gemini (includes tasks in response)
             steps_data = generate_roadmap_with_gemini({}, skill_gaps, user_skills)
             
             created_steps = []
+            total_tasks = 0
             for i, step_data in enumerate(steps_data):
                 step = RoadmapStep.objects.create(
                     user=mentee_user,
@@ -218,23 +354,106 @@ class MenteeGenerateRoadmapView(APIView):
                     mentor_approved=True,
                 )
                 
-                # Create 2-3 tasks for each step
-                task_titles = _generate_tasks_for_step(step_data)
-                for j, task_title in enumerate(task_titles):
+                # Use Gemini-generated tasks from step_data
+                tasks_data = step_data.get('tasks', [])
+                for j, task_data in enumerate(tasks_data):
                     Task.objects.create(
                         user=mentee_user,
                         step=step,
-                        title=task_title['title'],
-                        description=task_title['description'],
+                        title=task_data.get('title', f'Task {j+1}'),
+                        description=task_data.get('description', ''),
                         due_date=date.today() + timedelta(days=7 * (i + 1) + j * 2),
                         status='pending',
                     )
+                    total_tasks += 1
                 
                 created_steps.append(step)
             
             return Response({
-                'message': f'Generated {len(created_steps)} steps with tasks',
+                'message': f'Generated {len(created_steps)} steps with {total_tasks} tasks',
                 'steps': RoadmapStepSerializer(created_steps, many=True).data
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MenteeGenerateSingleStepView(APIView):
+    """Generate a single roadmap step with tasks using Gemini for preview"""
+    def post(self, request, pk):
+        if request.user.role != 'mentor':
+            return Response({'error': 'Not a mentor'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            from apps.users.models import User
+            from apps.analysis.services import generate_single_step_with_gemini
+            
+            mentee_user = User.objects.get(pk=pk)
+            mentee_profile = FreelancerProfile.objects.get(user=mentee_user)
+            mentor_profile = MentorProfile.objects.get(user=request.user)
+            
+            if mentee_profile.connected_mentor != mentor_profile:
+                return Response({'error': 'Not your mentee'}, status=status.HTTP_403_FORBIDDEN)
+            
+            skill_gaps = request.data.get('skill_gaps', [])
+            user_skills = request.data.get('user_skills', [])
+            existing_steps = list(RoadmapStep.objects.filter(user=mentee_user).values_list('title', flat=True))
+            
+            # Generate single step with Gemini
+            step_data = generate_single_step_with_gemini(skill_gaps, user_skills, existing_steps)
+            
+            return Response(step_data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MenteeCreateStepWithTasksView(APIView):
+    """Create a roadmap step with tasks after mentor review"""
+    def post(self, request, pk):
+        if request.user.role != 'mentor':
+            return Response({'error': 'Not a mentor'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            from apps.users.models import User
+            from datetime import date, timedelta
+            
+            mentee_user = User.objects.get(pk=pk)
+            mentee_profile = FreelancerProfile.objects.get(user=mentee_user)
+            mentor_profile = MentorProfile.objects.get(user=request.user)
+            
+            if mentee_profile.connected_mentor != mentor_profile:
+                return Response({'error': 'Not your mentee'}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get the next order number
+            last_step = RoadmapStep.objects.filter(user=mentee_user).order_by('-order').first()
+            next_order = (last_step.order + 1) if last_step else 0
+            
+            # Create the step
+            step = RoadmapStep.objects.create(
+                user=mentee_user,
+                order=next_order,
+                title=request.data.get('title', ''),
+                description=request.data.get('description', ''),
+                duration=request.data.get('duration', '1 week'),
+                type=request.data.get('type', 'skill'),
+                status='pending',
+                mentor_approved=True,
+            )
+            
+            # Create tasks for this step
+            tasks_data = request.data.get('tasks', [])
+            created_tasks = []
+            for i, task_data in enumerate(tasks_data):
+                task = Task.objects.create(
+                    user=mentee_user,
+                    step=step,
+                    title=task_data.get('title', f'Task {i+1}'),
+                    description=task_data.get('description', ''),
+                    due_date=date.today() + timedelta(days=7 + i * 2),
+                    status='pending',
+                )
+                created_tasks.append(task)
+            
+            return Response({
+                'message': f'Created step with {len(created_tasks)} tasks',
+                'step': RoadmapStepSerializer(step).data
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
