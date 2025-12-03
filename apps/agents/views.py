@@ -683,9 +683,15 @@ class AIInsightDetailView(APIView):
 
 
 def generate_ai_insights(user, job):
-    """Generate AI insights using Gemini and store in database"""
+    """Generate AI insights using Gemini and store in database.
+    
+    Memory-optimized: Uses rule-based generation by default to avoid
+    Render free tier memory limits. Set USE_GEMINI_INSIGHTS=true to enable.
+    """
     from .llm_judge import get_gemini_client
     import json
+    import gc
+    import os
     
     print(f"[INSIGHTS] Generating for job {job.id}")
     
@@ -699,29 +705,31 @@ def generate_ai_insights(user, job):
     # Clear old non-bookmarked insights
     AIInsight.objects.filter(user=user, is_bookmarked=False).delete()
     
-    model = get_gemini_client()
+    # Check if Gemini insights are enabled (disabled by default to save memory)
+    use_gemini = os.getenv('USE_GEMINI_INSIGHTS', 'false').lower() == 'true'
+    model = get_gemini_client() if use_gemini else None
+    
+    if model:
+        print("   [GEMINI] Using Gemini for insights (memory intensive)")
+    else:
+        print("   [RULE] Using rule-based insights (memory efficient)")
+    
     insights_created = 0
     
-    # Define insight generators
+    # Reduced set of insights to prevent memory issues (4 instead of 9)
     insight_configs = [
-        ('market_trend', generate_market_trend_prompt),
         ('skill_gap', generate_skill_gap_prompt),
         ('career_advice', generate_career_advice_prompt),
         ('learning_path', generate_learning_path_prompt),
-        ('salary_insight', generate_salary_insight_prompt),
         ('project_suggestion', generate_project_suggestion_prompt),
-        ('swot_analysis', generate_swot_analysis_prompt),
-        ('salary_comparison', generate_salary_comparison_prompt),
-        ('skill_demand', generate_skill_demand_prompt),
     ]
     
     for insight_type, prompt_generator in insight_configs:
         try:
-            prompt = prompt_generator(score_result, benchmark, llm_evaluation, skills)
-            
             if model:
-                # Use Gemini
+                # Use Gemini (only if explicitly enabled)
                 print(f"   [GEMINI] Generating {insight_type}...")
+                prompt = prompt_generator(score_result, benchmark, llm_evaluation, skills)
                 response = model.generate_content(prompt)
                 text = response.text.strip()
                 
@@ -734,10 +742,14 @@ def generate_ai_insights(user, job):
                     text = text[:-3]
                 
                 insight_data = json.loads(text.strip())
+                
+                # Force garbage collection after each Gemini call
+                del response, text
+                gc.collect()
             else:
-                # Fallback to rule-based
+                # Fallback to rule-based (default, memory efficient)
                 print(f"   [RULE] Generating {insight_type}...")
-                insight_data = generate_fallback_insight(insight_type, score_result, benchmark, llm_evaluation)
+                insight_data = generate_fallback_insight(insight_type, score_result, benchmark, llm_evaluation, skills)
             
             # Create insight
             AIInsight.objects.create(
