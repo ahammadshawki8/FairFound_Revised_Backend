@@ -630,7 +630,9 @@ class AIInsightsListView(APIView):
         
         if not latest_job:
             return Response({
-                'error': 'No completed analysis found. Please complete onboarding first.'
+                'error': 'No completed analysis found. Please complete onboarding first.',
+                'code': 'NO_ANALYSIS',
+                'insights_count': 0
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:

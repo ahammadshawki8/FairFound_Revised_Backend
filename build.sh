@@ -16,3 +16,9 @@ if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
     python manage.py createsuperuser --noinput --email "$DJANGO_SUPERUSER_EMAIL" --username "$DJANGO_SUPERUSER_USERNAME" || true
     echo "Superuser creation attempted"
 fi
+
+# Seed data (only runs if tables are empty)
+echo "Seeding initial data..."
+python manage.py seed_mentors || true
+python manage.py seed_benchmarks || true
+echo "Seeding complete"
