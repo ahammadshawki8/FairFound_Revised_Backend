@@ -120,14 +120,71 @@ class ConnectMentorView(APIView):
 
 
 class DisconnectMentorView(APIView):
-    def delete(self, request, pk):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def _disconnect(self, request, pk):
+        """Internal method to handle disconnect logic"""
+        print(f"[MENTORSHIP] Disconnect request from user {request.user.username} for mentor ID {pk}")
+        
         try:
+            mentor = MentorProfile.objects.get(pk=pk)
+            print(f"[MENTORSHIP] Found mentor: {mentor.user.username}")
+            
             profile = FreelancerProfile.objects.get(user=request.user)
+            print(f"[MENTORSHIP] Found freelancer profile, current mentor: {profile.connected_mentor}")
+            
+            # Verify user is connected to this mentor
+            if profile.connected_mentor != mentor:
+                print(f"[MENTORSHIP] ❌ User not connected to this mentor. Connected to: {profile.connected_mentor_id}")
+                return Response({'error': 'Not connected to this mentor'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Clear the connection
             profile.connected_mentor = None
             profile.save()
-            return Response({'message': 'Disconnected successfully'})
+            print(f"[MENTORSHIP] ✅ Cleared connected_mentor for {request.user.username}")
+            
+            # Update user's pro status
+            request.user.is_pro = False
+            request.user.save()
+            print(f"[MENTORSHIP] ✅ Updated is_pro to False for {request.user.username}")
+            
+            print(f"[MENTORSHIP] ✅ Successfully disconnected {request.user.username} from mentor {mentor.user.username}")
+            
+            return Response({
+                'message': 'Disconnected successfully',
+                'mentor_id': pk,
+                'mentee_removed': True
+            })
+        except MentorProfile.DoesNotExist:
+            print(f"[MENTORSHIP] ❌ Mentor with ID {pk} not found")
+            return Response({'error': 'Mentor not found'}, status=status.HTTP_404_NOT_FOUND)
         except FreelancerProfile.DoesNotExist:
+            print(f"[MENTORSHIP] ❌ Freelancer profile not found for user {request.user.username}")
             return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    def delete(self, request, pk):
+        print(f"[MENTORSHIP] DELETE request received for mentor {pk}")
+        return self._disconnect(request, pk)
+    
+    def post(self, request, pk):
+        print(f"[MENTORSHIP] POST request received for mentor {pk}")
+        return self._disconnect(request, pk)
+
+
+class MyReviewsView(APIView):
+    """Get reviews for the currently logged-in mentor"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        if request.user.role != 'mentor':
+            return Response({'error': 'Not a mentor'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            mentor_profile = MentorProfile.objects.get(user=request.user)
+            reviews = MentorReview.objects.filter(mentor=mentor_profile).order_by('-created_at')
+            serializer = MentorReviewSerializer(reviews, many=True)
+            return Response(serializer.data)
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 class MentorAvailabilityView(APIView):
@@ -213,30 +270,34 @@ class MenteeDetailView(APIView):
 
 
 def _get_mentee_analysis(user):
-    """Get analysis data for a mentee from their latest agent run"""
+    """Get analysis data for a mentee from their latest ingestion job"""
     try:
-        from apps.agents.models import AgentRun
-        latest_run = AgentRun.objects.filter(user=user).order_by('-created_at').first()
-        if latest_run:
-            evaluation = latest_run.evaluation_result or {}
-            benchmark = latest_run.benchmark_result or {}
-            breakdown = latest_run.score_breakdown or {}
-            
-            return {
-                'overall_score': round((latest_run.overall_score or 0) * 100),
-                'percentile': latest_run.percentile or 0,
-                'strengths': evaluation.get('strengths', []),
-                'weaknesses': evaluation.get('areas_for_improvement', []),
-                'skill_gaps': benchmark.get('market_insights', {}).get('skill_gaps', []),
-                'summary': evaluation.get('summary', ''),
-                'market_position': evaluation.get('market_position', {}),
-                'metrics': {
-                    'portfolio_score': round((breakdown.get('portfolio_quality', {}).get('raw_score', 0.5)) * 100),
-                    'github_score': round((breakdown.get('github_activity', {}).get('raw_score', 0.5)) * 100),
-                    'skill_score': round((breakdown.get('skill_strength', {}).get('raw_score', 0.5)) * 100),
-                    'experience_score': round((breakdown.get('experience_depth', {}).get('raw_score', 0.5)) * 100),
+        from apps.agents.models import IngestionJob, ScoreSnapshot
+        latest_job = IngestionJob.objects.filter(user=user, status='done').order_by('-created_at').first()
+        if latest_job:
+            # Get the score snapshot for this job
+            score = ScoreSnapshot.objects.filter(job=latest_job).first()
+            if score:
+                breakdown = score.breakdown or {}
+                result = latest_job.result or {}
+                evaluation = result.get('evaluation', {})
+                benchmark = result.get('benchmark', {})
+                
+                return {
+                    'overall_score': round((score.overall_score or 0) * 100),
+                    'percentile': benchmark.get('percentile', 0),
+                    'strengths': evaluation.get('strengths', []),
+                    'weaknesses': evaluation.get('areas_for_improvement', []),
+                    'skill_gaps': benchmark.get('market_insights', {}).get('skill_gaps', []),
+                    'summary': evaluation.get('summary', ''),
+                    'market_position': evaluation.get('market_position', {}),
+                    'metrics': {
+                        'portfolio_score': round((breakdown.get('portfolio_quality', {}).get('raw_score', 0.5)) * 100),
+                        'github_score': round((breakdown.get('github_activity', {}).get('raw_score', 0.5)) * 100),
+                        'skill_score': round((breakdown.get('skill_strength', {}).get('raw_score', 0.5)) * 100),
+                        'experience_score': round((breakdown.get('experience_depth', {}).get('raw_score', 0.5)) * 100),
+                    }
                 }
-            }
     except Exception as e:
         print(f"Error getting mentee analysis: {e}")
     return None

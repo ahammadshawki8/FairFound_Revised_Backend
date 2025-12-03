@@ -173,18 +173,27 @@ class AIChatView(APIView):
 
     def _get_gemini_response(self, message, page_context, history, user):
         """Get response from Gemini API"""
+        print(f"[AI CHAT] GEMINI_AVAILABLE: {GEMINI_AVAILABLE}, API_KEY set: {bool(GEMINI_API_KEY)}")
+        
         if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+            print("[AI CHAT] Falling back to rule-based responses")
             return self._get_fallback_response(message)
 
         try:
             # Build context with user info
             user_context = f"User: {user.username}"
-            if hasattr(user, 'freelancer_profile'):
-                profile = user.freelancer_profile
-                if profile.title:
-                    user_context += f", Role: {profile.title}"
-                if profile.skills:
-                    user_context += f", Skills: {', '.join(profile.skills[:5])}"
+            try:
+                from apps.users.models import FreelancerProfile
+                profile = FreelancerProfile.objects.filter(user=user).first()
+                if profile:
+                    if profile.title:
+                        user_context += f", Role: {profile.title}"
+                    if profile.skills:
+                        user_context += f", Skills: {', '.join(profile.skills[:5])}"
+                    if profile.experience_years:
+                        user_context += f", Experience: {profile.experience_years} years"
+            except Exception as e:
+                print(f"[AI CHAT] Error getting profile: {e}")
 
             # Build conversation history
             history_text = ""
@@ -204,15 +213,17 @@ Previous conversation:
 User: {message}
 Assistant:"""
 
+            print(f"[AI CHAT] Calling Gemini API...")
             model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(full_prompt)
             
             if response.text:
+                print(f"[AI CHAT] Got Gemini response: {response.text[:100]}...")
                 return response.text.strip()
             return "I'm sorry, I couldn't process that. Could you try rephrasing?"
 
         except Exception as e:
-            print(f"Gemini API Error: {e}")
+            print(f"[AI CHAT] Gemini API Error: {e}")
             return self._get_fallback_response(message)
 
     def _get_fallback_response(self, message):
@@ -275,17 +286,27 @@ class AIQuickChatView(APIView):
 
     def _get_gemini_response(self, message, page_context, history, user):
         """Get response from Gemini API"""
+        print(f"[AI CHAT] GEMINI_AVAILABLE: {GEMINI_AVAILABLE}, API_KEY set: {bool(GEMINI_API_KEY)}")
+        
         if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+            print("[AI CHAT] Falling back to rule-based responses")
             return self._get_fallback_response(message)
 
         try:
+            # Build user context
             user_context = f"User: {user.username}"
-            if hasattr(user, 'freelancer_profile'):
-                profile = user.freelancer_profile
-                if profile.title:
-                    user_context += f", Role: {profile.title}"
-                if profile.skills:
-                    user_context += f", Skills: {', '.join(profile.skills[:5])}"
+            try:
+                from apps.users.models import FreelancerProfile
+                profile = FreelancerProfile.objects.filter(user=user).first()
+                if profile:
+                    if profile.title:
+                        user_context += f", Role: {profile.title}"
+                    if profile.skills:
+                        user_context += f", Skills: {', '.join(profile.skills[:5])}"
+                    if profile.experience_years:
+                        user_context += f", Experience: {profile.experience_years} years"
+            except Exception as e:
+                print(f"[AI CHAT] Error getting profile: {e}")
 
             history_text = "\n".join([f"{h['role'].capitalize()}: {h['content']}" for h in history[-10:]])
 
@@ -301,15 +322,17 @@ Previous conversation:
 User: {message}
 Assistant:"""
 
+            print(f"[AI CHAT] Calling Gemini API...")
             model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(full_prompt)
             
             if response.text:
+                print(f"[AI CHAT] Got Gemini response: {response.text[:100]}...")
                 return response.text.strip()
             return "I'm sorry, I couldn't process that. Could you try rephrasing?"
 
         except Exception as e:
-            print(f"Gemini API Error: {e}")
+            print(f"[AI CHAT] Gemini API Error: {e}")
             return self._get_fallback_response(message)
 
     def _get_fallback_response(self, message):

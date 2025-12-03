@@ -154,9 +154,29 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
 class TaskStatusUpdateView(APIView):
     def put(self, request, pk):
         try:
-            task = Task.objects.get(pk=pk, user=request.user)
+            user = request.user
+            
+            # Check if user is a mentor updating their mentee's task
+            if user.role == 'mentor':
+                from apps.users.models import MentorProfile, FreelancerProfile
+                try:
+                    mentor_profile = MentorProfile.objects.get(user=user)
+                    mentee_users = FreelancerProfile.objects.filter(connected_mentor=mentor_profile).values_list('user', flat=True)
+                    task = Task.objects.get(pk=pk, user__in=mentee_users)
+                except MentorProfile.DoesNotExist:
+                    return Response({'error': 'Mentor profile not found'}, status=status.HTTP_404_NOT_FOUND)
+            else:
+                # Regular user updating their own task
+                task = Task.objects.get(pk=pk, user=user)
+            
+            old_status = task.status
             task.status = request.data.get('status', task.status)
+            if 'feedback' in request.data:
+                task.feedback = request.data['feedback']
             task.save()
+            
+            print(f"[ROADMAP] Task {pk} status updated: {old_status} -> {task.status}")
+            
             return Response(TaskSerializer(task).data)
         except Task.DoesNotExist:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
