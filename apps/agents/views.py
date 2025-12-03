@@ -682,6 +682,82 @@ class AIInsightDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class WeeklyStatsView(APIView):
+    """Get weekly statistics for the dashboard report card"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from datetime import datetime, timedelta
+        from apps.roadmap.models import RoadmapStep, Task
+        
+        user = request.user
+        now = datetime.now()
+        
+        # Calculate week range (Monday to Sunday)
+        start_of_week = now - timedelta(days=now.weekday())
+        start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_week = start_of_week + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        
+        # Previous week for comparison
+        prev_week_start = start_of_week - timedelta(days=7)
+        prev_week_end = start_of_week - timedelta(seconds=1)
+        
+        # Get skills learned this week (completed roadmap steps)
+        skills_this_week = RoadmapStep.objects.filter(
+            user=user,
+            status='completed',
+            updated_at__gte=start_of_week,
+            updated_at__lte=end_of_week
+        ).count()
+        
+        # Get tasks completed this week
+        tasks_this_week = Task.objects.filter(
+            user=user,
+            status='completed',
+            updated_at__gte=start_of_week,
+            updated_at__lte=end_of_week
+        ).count()
+        
+        # Get latest analysis for score comparison
+        latest_job = IngestionJob.objects.filter(user=user, status='done').order_by('-created_at').first()
+        prev_job = IngestionJob.objects.filter(user=user, status='done').order_by('-created_at')[1:2].first()
+        
+        current_score = 0
+        prev_score = 0
+        percentile = 50
+        
+        if latest_job and latest_job.result:
+            score_result = latest_job.result.get('score_result', {})
+            current_score = int(score_result.get('overall_score', 0) * 100)
+            percentile = latest_job.result.get('benchmark', {}).get('user_percentile', 50)
+        
+        if prev_job and prev_job.result:
+            prev_score = int(prev_job.result.get('score_result', {}).get('overall_score', 0) * 100)
+        
+        # Calculate rank change (based on score improvement)
+        rank_change = current_score - prev_score if prev_score > 0 else 0
+        
+        # Profile views (simulated based on activity - in production, track actual views)
+        base_views = 50 + (percentile * 2)  # Higher percentile = more visibility
+        activity_bonus = (skills_this_week * 15) + (tasks_this_week * 5)
+        profile_views = base_views + activity_bonus
+        
+        # Format date range
+        date_range = f"{start_of_week.strftime('%b %d')} - {end_of_week.strftime('%b %d')}"
+        
+        return Response({
+            'date_range': date_range,
+            'skills_learned': skills_this_week,
+            'tasks_completed': tasks_this_week,
+            'profile_views': profile_views,
+            'rank_change': rank_change,
+            'current_score': current_score,
+            'percentile': percentile,
+            'week_start': start_of_week.isoformat(),
+            'week_end': end_of_week.isoformat(),
+        })
+
+
 def generate_ai_insights(user, job):
     """Generate AI insights using Gemini and store in database.
     

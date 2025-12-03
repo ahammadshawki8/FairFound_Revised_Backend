@@ -6,7 +6,7 @@ from .views import (
     OnboardingSubmitView, JobListView, JobDetailView,
     ScoreAnalysisView, LatestAnalysisView, BenchmarkView, RegenerateView,
     QuickAnalyzeView, ReviewQueueView, ReviewActionView,
-    SeedBenchmarksView, AIInsightsListView, AIInsightDetailView
+    SeedBenchmarksView, AIInsightsListView, AIInsightDetailView, WeeklyStatsView
 )
 
 urlpatterns = [
@@ -23,6 +23,9 @@ urlpatterns = [
     
     # Benchmark data
     path('benchmarks/', BenchmarkView.as_view(), name='benchmarks'),
+    
+    # Weekly stats for dashboard
+    path('weekly-stats/', WeeklyStatsView.as_view(), name='weekly_stats'),
     
     # AI Insights endpoints
     path('insights/', AIInsightsListView.as_view(), name='insights_list'),
