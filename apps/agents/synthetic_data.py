@@ -230,7 +230,7 @@ def seed_junior_frontend_benchmarks():
     return len(profiles)
 
 
-def get_junior_frontend_benchmark(user_score: float) -> Dict:
+def get_junior_frontend_benchmark(user_score: float, user_skills: List[str] = None) -> Dict:
     """Get benchmark comparison for a junior frontend developer"""
     print(f"\n      [BENCHMARK] Comparing user score {user_score:.3f} against synthetic dataset...")
     try:
@@ -280,12 +280,12 @@ def get_junior_frontend_benchmark(user_score: float) -> Dict:
             'sample_size': cohort.sample_size,
             'market_insights': {
                 'rate_suggestion': get_rate_suggestion(user_score, float(cohort.avg_hourly_rate)),
-                'skill_gaps': get_skill_gaps(cohort.common_skills[:10])
+                'skill_gaps': get_skill_gaps(cohort.common_skills[:10], user_skills)
             }
         }
     except BenchmarkCohort.DoesNotExist:
         # Return default data if no benchmark exists
-        return get_default_benchmark(user_score)
+        return get_default_benchmark(user_score, user_skills)
 
 
 def get_rate_suggestion(score: float, avg_rate: float) -> Dict:
@@ -312,14 +312,34 @@ def get_rate_suggestion(score: float, avg_rate: float) -> Dict:
     }
 
 
-def get_skill_gaps(in_demand_skills: List[str]) -> List[str]:
-    """Return skills that are in high demand for junior frontend devs"""
-    high_value = ['typescript', 'react', 'next.js', 'tailwind', 'jest']
+def get_skill_gaps(in_demand_skills: List[str], user_skills: List[str] = None) -> List[str]:
+    """
+    Return skills that are in high demand but the user doesn't have.
+    If user_skills is None, returns generic high-value skills.
+    """
+    # High-value skills for junior frontend developers (prioritized)
+    high_value = ['typescript', 'react', 'next.js', 'tailwind', 'jest', 'git', 'redux', 'graphql', 'docker', 'ci/cd']
+    
+    if user_skills:
+        # Normalize user skills to lowercase for comparison
+        user_skills_lower = [s.lower().strip() for s in user_skills]
+        # Find skills user doesn't have that are in demand
+        gaps = [s for s in high_value if s.lower() not in user_skills_lower and s in in_demand_skills]
+        # If user has most high-value skills, suggest advanced ones
+        if len(gaps) < 3:
+            advanced_skills = ['system-design', 'performance-optimization', 'accessibility', 'testing', 'ci/cd']
+            gaps.extend([s for s in advanced_skills if s.lower() not in user_skills_lower][:3])
+        return gaps[:5]
+    
+    # Fallback: return generic high-value skills
     return [s for s in high_value if s in in_demand_skills][:5]
 
 
-def get_default_benchmark(user_score: float) -> Dict:
+def get_default_benchmark(user_score: float, user_skills: List[str] = None) -> Dict:
     """Return default benchmark when no data exists"""
+    in_demand = ['react', 'javascript', 'typescript', 'tailwind', 'git', 'next.js', 'jest']
+    skill_gaps = get_skill_gaps(in_demand, user_skills)
+    
     return {
         'user_percentile': int(user_score * 100),
         'tier': 'Unranked',
@@ -327,10 +347,10 @@ def get_default_benchmark(user_score: float) -> Dict:
         'benchmark_percentiles': {10: 0.25, 25: 0.35, 50: 0.50, 75: 0.65, 90: 0.78},
         'avg_rate': 35.0,
         'avg_experience': 1.2,
-        'in_demand_skills': ['react', 'javascript', 'typescript', 'tailwind', 'git'],
+        'in_demand_skills': in_demand,
         'sample_size': 0,
         'market_insights': {
             'rate_suggestion': {'suggested_rate': 35, 'range': 'market rate', 'min': 30, 'max': 40},
-            'skill_gaps': ['typescript', 'react', 'tailwind']
+            'skill_gaps': skill_gaps
         }
     }

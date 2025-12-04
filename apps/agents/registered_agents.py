@@ -546,18 +546,24 @@ class BenchmarkAgent(BaseAgent):
     def _execute(self, context: AgentContext) -> AgentResult:
         aggregator_result = context.get_result('score_aggregator')
         
+        # Get user skills from context for personalized skill gaps
+        user_skills = []
+        form_result = context.get_result('form_processor')
+        if form_result and form_result.success:
+            user_skills = form_result.data.get('skills', [])
+        
         if not aggregator_result or not aggregator_result.success:
             return AgentResult(
                 agent_id=self.agent_id,
                 success=True,
-                data={'benchmark': get_junior_frontend_benchmark(0.5)},
+                data={'benchmark': get_junior_frontend_benchmark(0.5, user_skills)},
                 confidence=0.5
             )
         
         score_result = aggregator_result.data.get('score_result', {})
         overall_score = score_result.get('overall_score', 0.5)
         
-        benchmark = get_junior_frontend_benchmark(overall_score)
+        benchmark = get_junior_frontend_benchmark(overall_score, user_skills)
         
         return AgentResult(
             agent_id=self.agent_id,

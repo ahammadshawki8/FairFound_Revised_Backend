@@ -163,8 +163,9 @@ class OnboardingSubmitView(APIView):
             print(f"   TIER: {score_result['tier']}")
             
             print("\n📊 [AGENT 6] Benchmark Agent")
-            benchmark = get_junior_frontend_benchmark(score_result['overall_score'])
+            benchmark = get_junior_frontend_benchmark(score_result['overall_score'], skills)
             print(f"   Percentile: {benchmark.get('user_percentile')}th")
+            print(f"   Skill gaps: {benchmark.get('market_insights', {}).get('skill_gaps', [])}")
             
             print("\n🤖 [AGENT 7] LLM Judge Agent")
             structured_data = {'form': form_data, 'github': github_result[2] if len(github_result) > 2 else {}}
@@ -351,18 +352,22 @@ class BenchmarkView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        # Get user's latest score if available
+        # Get user's latest score and skills if available
         user_score = None
+        user_skills = []
         latest_job = IngestionJob.objects.filter(
             user=request.user, 
             status='done'
         ).first()
         
-        if latest_job and latest_job.scores.exists():
-            user_score = latest_job.scores.first().overall_score
+        if latest_job:
+            if latest_job.scores.exists():
+                user_score = latest_job.scores.first().overall_score
+            # Get user skills from job result
+            user_skills = latest_job.result.get('skills_detected', []) if latest_job.result else []
         
-        # Get benchmark data
-        benchmark = get_junior_frontend_benchmark(user_score or 0.5)
+        # Get benchmark data with user skills for personalized skill gaps
+        benchmark = get_junior_frontend_benchmark(user_score or 0.5, user_skills)
         
         # Add user context if available
         if user_score:
@@ -487,8 +492,9 @@ class QuickAnalyzeView(APIView):
         print("-" * 60)
         
         print("\n📊 [AGENT 6] Benchmark Agent (Synthetic Data)")
-        benchmark = get_junior_frontend_benchmark(score_result['overall_score'])
+        benchmark = get_junior_frontend_benchmark(score_result['overall_score'], skills)
         print(f"   Percentile: {benchmark.get('user_percentile')}th")
+        print(f"   Skill gaps: {benchmark.get('market_insights', {}).get('skill_gaps', [])}")
         
         print("\n" + "-" * 60)
         print("  PHASE 4: IMPROVEMENT GENERATION")

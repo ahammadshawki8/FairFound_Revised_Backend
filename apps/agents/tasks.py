@@ -229,7 +229,7 @@ def run_junior_frontend_pipeline(self, job_id: int):
         print("   Using synthetic dataset: 200 junior frontend developer profiles")
         print("   Data source: Kaggle-inspired + Stack Overflow Survey 2024")
         
-        benchmark = get_junior_frontend_benchmark(score_result['overall_score'])
+        benchmark = get_junior_frontend_benchmark(score_result['overall_score'], list(all_skills))
         
         print(f"\n   ✅ BENCHMARK RESULTS:")
         print(f"   User percentile: {benchmark.get('user_percentile')}th")
@@ -238,6 +238,7 @@ def run_junior_frontend_pipeline(self, job_id: int):
         print(f"   Average market rate: ${benchmark.get('avg_rate')}/hr")
         print(f"   Sample size: {benchmark.get('sample_size')} profiles")
         print(f"   In-demand skills: {benchmark.get('in_demand_skills', [])[:5]}")
+        print(f"   Personalized skill gaps: {benchmark.get('market_insights', {}).get('skill_gaps', [])}")
         
         # ============================================
         # PHASE 5: LLM Evaluation (if available)
