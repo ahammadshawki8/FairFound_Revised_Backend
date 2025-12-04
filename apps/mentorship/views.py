@@ -51,13 +51,44 @@ class MentorReviewListView(generics.ListCreateAPIView):
         return MentorReview.objects.filter(mentor_id=self.kwargs['pk'])
 
     def perform_create(self, serializer):
-        mentor = MentorProfile.objects.get(pk=self.kwargs['pk'])
-        serializer.save(reviewer=self.request.user, mentor=mentor)
-        # Update mentor's rating
-        reviews = MentorReview.objects.filter(mentor=mentor)
-        mentor.rating = sum(r.rating for r in reviews) / reviews.count()
-        mentor.total_reviews = reviews.count()
-        mentor.save()
+        mentor_id = self.kwargs['pk']
+        print(f"[REVIEW] Creating review for mentor {mentor_id} by user {self.request.user.username}")
+        
+        try:
+            mentor = MentorProfile.objects.get(pk=mentor_id)
+            print(f"[REVIEW] Found mentor: {mentor.user.username}")
+            
+            # Check if user already reviewed this mentor
+            existing_review = MentorReview.objects.filter(mentor=mentor, reviewer=self.request.user).first()
+            if existing_review:
+                print(f"[REVIEW] User already reviewed this mentor, updating existing review")
+                existing_review.rating = serializer.validated_data.get('rating', existing_review.rating)
+                existing_review.comment = serializer.validated_data.get('comment', existing_review.comment)
+                existing_review.save()
+                # Update mentor's rating
+                reviews = MentorReview.objects.filter(mentor=mentor)
+                mentor.rating = sum(r.rating for r in reviews) / reviews.count()
+                mentor.total_reviews = reviews.count()
+                mentor.save()
+                print(f"[REVIEW] ✅ Updated existing review")
+                return
+            
+            serializer.save(reviewer=self.request.user, mentor=mentor)
+            print(f"[REVIEW] ✅ Review saved successfully")
+            
+            # Update mentor's rating
+            reviews = MentorReview.objects.filter(mentor=mentor)
+            mentor.rating = sum(r.rating for r in reviews) / reviews.count()
+            mentor.total_reviews = reviews.count()
+            mentor.save()
+            print(f"[REVIEW] ✅ Updated mentor rating to {mentor.rating} ({mentor.total_reviews} reviews)")
+            
+        except MentorProfile.DoesNotExist:
+            print(f"[REVIEW] ❌ Mentor {mentor_id} not found")
+            raise
+        except Exception as e:
+            print(f"[REVIEW] ❌ Error creating review: {e}")
+            raise
 
 
 class ConnectMentorView(APIView):

@@ -23,10 +23,13 @@ class SessionSerializer(serializers.ModelSerializer):
 class MentorReviewSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source='reviewer.username', read_only=True)
     reviewer_avatar = serializers.SerializerMethodField()
+    mentor = serializers.PrimaryKeyRelatedField(read_only=True)
+    reviewer = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = MentorReview
         fields = ['id', 'mentor', 'reviewer', 'reviewer_name', 'reviewer_avatar', 'rating', 'comment', 'helpful', 'created_at']
+        read_only_fields = ['id', 'mentor', 'reviewer', 'reviewer_name', 'reviewer_avatar', 'helpful', 'created_at']
 
     def get_reviewer_avatar(self, obj):
         if obj.reviewer.avatar:
