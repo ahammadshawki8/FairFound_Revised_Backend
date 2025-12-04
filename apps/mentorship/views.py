@@ -108,6 +108,7 @@ class ConnectMentorView(APIView):
                     duration=step_data.get('duration', '1 week'),
                     status=step_data.get('status', 'pending'),
                     type=step_data.get('type', 'skill'),
+                    resources=step_data.get('resources', []),  # Include learning resources
                     mentor_approved=True,
                 )
                 created_steps.append(step)
@@ -344,6 +345,7 @@ class MenteeStepCreateView(APIView):
                 duration=request.data.get('duration', '1 week'),
                 status=request.data.get('status', 'pending'),
                 type=request.data.get('type', 'skill'),
+                resources=request.data.get('resources', []),  # Include learning resources
                 mentor_approved=True,
                 mentor_notes=request.data.get('mentor_notes', ''),
                 order=next_order,
@@ -428,6 +430,7 @@ class MenteeGenerateRoadmapView(APIView):
                     duration=step_data.get('duration', '1 week'),
                     status=step_data.get('status', 'pending'),
                     type=step_data.get('type', 'skill'),
+                    resources=step_data.get('resources', []),  # Include learning resources
                     mentor_approved=True,
                 )
                 
@@ -510,6 +513,7 @@ class MenteeCreateStepWithTasksView(APIView):
                 description=request.data.get('description', ''),
                 duration=request.data.get('duration', '1 week'),
                 type=request.data.get('type', 'skill'),
+                resources=request.data.get('resources', []),  # Include learning resources
                 status='pending',
                 mentor_approved=True,
             )
