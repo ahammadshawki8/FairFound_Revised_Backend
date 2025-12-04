@@ -142,9 +142,30 @@ class BenchmarkSerializer(serializers.ModelSerializer):
 
 
 class HumanReviewSerializer(serializers.Serializer):
-    """Serializer for human review actions"""
+    """Serializer for human review actions (legacy)"""
     action = serializers.ChoiceField(choices=['approve', 'reject'])
     notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class HumanReviewDetailSerializer(serializers.Serializer):
+    """Detailed serializer for human-in-the-loop review submission"""
+    decision = serializers.ChoiceField(choices=['approved', 'rejected', 'modified'])
+    human_confidence = serializers.FloatField(min_value=0, max_value=1, required=False)
+    
+    # Ratings (1-5 scale)
+    accuracy_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
+    relevance_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
+    actionability_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
+    
+    # Modifications (only if decision is 'modified')
+    modified_strengths = serializers.ListField(child=serializers.CharField(), required=False)
+    modified_weaknesses = serializers.ListField(child=serializers.CharField(), required=False)
+    modified_recommendations = serializers.ListField(child=serializers.CharField(), required=False)
+    modified_score = serializers.FloatField(min_value=0, max_value=1, required=False)
+    
+    # Feedback
+    review_notes = serializers.CharField(required=False, allow_blank=True)
+    disagreement_reasons = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class QuickAnalyzeSerializer(serializers.Serializer):

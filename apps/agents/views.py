@@ -1346,3 +1346,249 @@ Return JSON with pie chart data showing market demand for different skill catego
 }}
 Return ONLY valid JSON.
 """
+
+
+# ============================================
+# HUMAN-IN-THE-LOOP REVIEW VIEWS
+# ============================================
+
+from .models import HumanReview
+from .serializers import HumanReviewDetailSerializer
+
+
+class HumanReviewListView(APIView):
+    """List evaluations pending human review or get review history"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Get evaluations that need human review or review history"""
+        status_filter = request.query_params.get('status', 'pending')
+        
+        if status_filter == 'pending':
+            # Get jobs with low confidence that need review
+            jobs = IngestionJob.objects.filter(
+                user=request.user,
+                status='done'
+            ).order_by('-created_at')[:10]
+            
+            pending_reviews = []
+            for job in jobs:
+                result = job.result or {}
+                llm_eval = result.get('llm_evaluation', {})
+                confidence = llm_eval.get('confidence', 0.5)
+                
+                # Check if already reviewed
+                existing_review = HumanReview.objects.filter(job=job).first()
+                
+                pending_reviews.append({
+                    'job_id': job.id,
+                    'created_at': job.created_at.isoformat(),
+                    'ai_confidence': confidence,
+                    'overall_score': result.get('score_result', {}).get('overall_score', 0),
+                    'tier': result.get('score_result', {}).get('tier', 'Unknown'),
+                    'evaluation_summary': llm_eval.get('summary', ''),
+                    'strengths': llm_eval.get('strengths', []),
+                    'weaknesses': llm_eval.get('areas_for_improvement', []),
+                    'recommendations': llm_eval.get('recommendations', []),
+                    'needs_review': confidence < 0.8 and not existing_review,
+                    'review_status': existing_review.decision if existing_review else 'pending',
+                })
+            
+            return Response({
+                'pending_reviews': pending_reviews,
+                'total': len(pending_reviews)
+            })
+        else:
+            # Get completed reviews
+            reviews = HumanReview.objects.filter(reviewer=request.user).order_by('-created_at')[:20]
+            return Response({
+                'reviews': [{
+                    'id': r.id,
+                    'job_id': r.job_id,
+                    'decision': r.decision,
+                    'ai_confidence': r.ai_confidence,
+                    'human_confidence': r.human_confidence,
+                    'accuracy_rating': r.accuracy_rating,
+                    'reviewed_at': r.reviewed_at.isoformat() if r.reviewed_at else None,
+                } for r in reviews],
+                'total': reviews.count()
+            })
+
+
+class HumanReviewDetailView(APIView):
+    """Get details of a specific evaluation for human review"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, job_id):
+        """Get full evaluation details for human review"""
+        try:
+            job = IngestionJob.objects.get(id=job_id, user=request.user)
+            result = job.result or {}
+            llm_eval = result.get('llm_evaluation', {})
+            score_result = result.get('score_result', {})
+            benchmark = result.get('benchmark', {})
+            
+            # Get existing review if any
+            existing_review = HumanReview.objects.filter(job=job).first()
+            
+            return Response({
+                'job_id': job.id,
+                'created_at': job.created_at.isoformat(),
+                
+                # AI Evaluation
+                'ai_evaluation': {
+                    'confidence': llm_eval.get('confidence', 0.5),
+                    'evaluation_type': llm_eval.get('evaluation_type', 'unknown'),
+                    'summary': llm_eval.get('summary', ''),
+                    'strengths': llm_eval.get('strengths', []),
+                    'weaknesses': llm_eval.get('areas_for_improvement', []),
+                    'recommendations': llm_eval.get('recommendations', []),
+                    'market_position': llm_eval.get('market_position', {}),
+                    'tier_assessment': llm_eval.get('tier_assessment', {}),
+                    'self_assessment': llm_eval.get('self_assessment', {}),
+                    'evaluation_metadata': llm_eval.get('evaluation_metadata', {}),
+                },
+                
+                # Scores
+                'scores': {
+                    'overall': score_result.get('overall_score', 0),
+                    'tier': score_result.get('tier', 'Unknown'),
+                    'breakdown': score_result.get('breakdown', {}),
+                },
+                
+                # Benchmark
+                'benchmark': {
+                    'percentile': benchmark.get('user_percentile', 50),
+                    'avg_rate': benchmark.get('avg_rate', 35),
+                },
+                
+                # Input data
+                'input_data': job.input_data.get('form_fields', {}),
+                
+                # Existing review
+                'existing_review': {
+                    'id': existing_review.id,
+                    'decision': existing_review.decision,
+                    'human_confidence': existing_review.human_confidence,
+                    'accuracy_rating': existing_review.accuracy_rating,
+                    'relevance_rating': existing_review.relevance_rating,
+                    'actionability_rating': existing_review.actionability_rating,
+                    'review_notes': existing_review.review_notes,
+                    'reviewed_at': existing_review.reviewed_at.isoformat() if existing_review.reviewed_at else None,
+                } if existing_review else None,
+            })
+        except IngestionJob.DoesNotExist:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class HumanReviewSubmitView(APIView):
+    """Submit human review for an AI evaluation"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, job_id):
+        """Submit human review"""
+        try:
+            job = IngestionJob.objects.get(id=job_id, user=request.user)
+            
+            serializer = HumanReviewDetailSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            data = serializer.validated_data
+            result = job.result or {}
+            llm_eval = result.get('llm_evaluation', {})
+            
+            # Create or update review
+            review, created = HumanReview.objects.update_or_create(
+                job=job,
+                defaults={
+                    'reviewer': request.user,
+                    'ai_confidence': llm_eval.get('confidence', 0.5),
+                    'ai_evaluation': llm_eval,
+                    'decision': data['decision'],
+                    'human_confidence': data.get('human_confidence'),
+                    'accuracy_rating': data.get('accuracy_rating'),
+                    'relevance_rating': data.get('relevance_rating'),
+                    'actionability_rating': data.get('actionability_rating'),
+                    'modified_strengths': data.get('modified_strengths'),
+                    'modified_weaknesses': data.get('modified_weaknesses'),
+                    'modified_recommendations': data.get('modified_recommendations'),
+                    'modified_score': data.get('modified_score'),
+                    'review_notes': data.get('review_notes', ''),
+                    'disagreement_reasons': data.get('disagreement_reasons', []),
+                    'reviewed_at': timezone.now(),
+                }
+            )
+            
+            # If modified, update the job result with human corrections
+            if data['decision'] == 'modified':
+                if data.get('modified_strengths'):
+                    llm_eval['strengths'] = data['modified_strengths']
+                if data.get('modified_weaknesses'):
+                    llm_eval['areas_for_improvement'] = data['modified_weaknesses']
+                if data.get('modified_recommendations'):
+                    llm_eval['recommendations'] = data['modified_recommendations']
+                llm_eval['human_reviewed'] = True
+                llm_eval['human_review_id'] = review.id
+                result['llm_evaluation'] = llm_eval
+                job.result = result
+                job.save()
+            
+            return Response({
+                'message': 'Review submitted successfully',
+                'review_id': review.id,
+                'decision': review.decision,
+                'created': created,
+            }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+            
+        except IngestionJob.DoesNotExist:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class HumanReviewStatsView(APIView):
+    """Get statistics about human reviews"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Get review statistics"""
+        reviews = HumanReview.objects.filter(reviewer=request.user)
+        
+        total = reviews.count()
+        approved = reviews.filter(decision='approved').count()
+        rejected = reviews.filter(decision='rejected').count()
+        modified = reviews.filter(decision='modified').count()
+        
+        # Calculate average ratings
+        avg_accuracy = reviews.filter(accuracy_rating__isnull=False).aggregate(
+            avg=models.Avg('accuracy_rating'))['avg'] or 0
+        avg_relevance = reviews.filter(relevance_rating__isnull=False).aggregate(
+            avg=models.Avg('relevance_rating'))['avg'] or 0
+        avg_actionability = reviews.filter(actionability_rating__isnull=False).aggregate(
+            avg=models.Avg('actionability_rating'))['avg'] or 0
+        
+        # AI vs Human confidence comparison
+        confidence_comparison = reviews.filter(
+            human_confidence__isnull=False
+        ).aggregate(
+            avg_ai=models.Avg('ai_confidence'),
+            avg_human=models.Avg('human_confidence')
+        )
+        
+        return Response({
+            'total_reviews': total,
+            'decisions': {
+                'approved': approved,
+                'rejected': rejected,
+                'modified': modified,
+            },
+            'approval_rate': (approved / total * 100) if total > 0 else 0,
+            'average_ratings': {
+                'accuracy': round(avg_accuracy, 2),
+                'relevance': round(avg_relevance, 2),
+                'actionability': round(avg_actionability, 2),
+            },
+            'confidence_comparison': {
+                'avg_ai_confidence': round(confidence_comparison['avg_ai'] or 0, 2),
+                'avg_human_confidence': round(confidence_comparison['avg_human'] or 0, 2),
+            }
+        })

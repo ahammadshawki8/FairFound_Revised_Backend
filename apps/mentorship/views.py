@@ -27,6 +27,22 @@ class MentorDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
 
+class MentorPublicAvailabilityView(APIView):
+    """Get a specific mentor's availability (public endpoint for booking)"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, pk):
+        try:
+            mentor = MentorProfile.objects.get(pk=pk)
+            return Response({
+                'slots': mentor.availability_slots or [],
+                'session_duration': mentor.session_duration,
+                'timezone': mentor.timezone,
+            })
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
 class MentorReviewListView(generics.ListCreateAPIView):
     serializer_class = MentorReviewSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]

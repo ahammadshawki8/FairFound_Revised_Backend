@@ -1,10 +1,20 @@
 """
 LLM Judge for Junior Frontend Developer evaluation
-Uses Google Gemini for AI-powered assessment
+Uses Google Gemini for AI-powered assessment with iterative confidence threshold loop.
+
+The system implements an LLM-as-a-Judge pattern with:
+1. Initial evaluation generation
+2. Confidence scoring (0-1 scale)
+3. Iterative refinement if confidence < 0.8 threshold
+4. Self-reflection and consistency checks
 """
 import json
-from typing import Dict
+from typing import Dict, Tuple, Optional
 from django.conf import settings
+
+# Confidence threshold for accepting evaluation
+CONFIDENCE_THRESHOLD = 0.8
+MAX_ITERATIONS = 3
 
 # Try to import Gemini
 try:
@@ -51,28 +61,105 @@ Provide a JSON response with:
     "rate_position": "entry level/market rate/above average/premium",
     "suggested_hourly_rate": number,
     "market_outlook": "brief market insight"
+  }},
+  "self_assessment": {{
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation of confidence level",
+    "data_quality": "high/medium/low",
+    "potential_biases": ["any identified biases"]
   }}
 }}
+
+IMPORTANT: Include a self_assessment with your confidence score (0.0-1.0) based on:
+- Data completeness (are all fields provided?)
+- Score consistency (do scores align with profile data?)
+- Recommendation specificity (are recommendations actionable?)
 
 Keep the tone supportive and constructive. Focus on actionable advice.
 Return ONLY valid JSON, no markdown or extra text.
 """
 
+REFINEMENT_PROMPT = """
+You previously evaluated a junior frontend developer but your confidence was {prev_confidence:.2f}.
+The confidence threshold is {threshold}.
+
+Previous evaluation:
+{previous_evaluation}
+
+Issues identified:
+{issues}
+
+Profile Data (unchanged):
+- Skills: {skills}
+- Experience: {experience_years} years
+- GitHub: {github_info}
+- Portfolio: {portfolio_info}
+- Overall Score: {overall_score}% ({tier} tier)
+- Percentile: {percentile}th
+
+Please provide a REFINED evaluation addressing the identified issues.
+Focus on:
+1. More specific, actionable recommendations
+2. Better alignment between scores and feedback
+3. More nuanced market position analysis
+
+Return the same JSON structure with improved content and a higher confidence score.
+Return ONLY valid JSON, no markdown or extra text.
+"""
+
+CONSISTENCY_CHECK_PROMPT = """
+Review this evaluation for internal consistency:
+
+Evaluation:
+{evaluation}
+
+Profile Scores:
+- Overall: {overall_score}%
+- Tier: {tier}
+- Percentile: {percentile}th
+
+Check for:
+1. Do strengths align with high scores?
+2. Do weaknesses align with low scores?
+3. Are recommendations relevant to identified gaps?
+4. Is the suggested rate appropriate for the percentile?
+
+Return JSON:
+{{
+  "is_consistent": true/false,
+  "consistency_score": 0.0-1.0,
+  "issues": ["issue1", "issue2"],
+  "suggested_fixes": ["fix1", "fix2"]
+}}
+
+Return ONLY valid JSON.
+"""
+
 
 def evaluate_junior_frontend(structured_data: Dict, score_result: Dict, benchmark: Dict) -> Dict:
     """
-    Generate LLM evaluation for junior frontend developer.
+    Generate LLM evaluation for junior frontend developer using iterative confidence loop.
+    
+    The system:
+    1. Generates initial evaluation with self-assessed confidence
+    2. If confidence < 0.8 threshold, iterates with refinement prompts
+    3. Performs consistency check to validate evaluation
+    4. Falls back to rule-based evaluation if LLM unavailable
+    
     Uses Gemini if available, falls back to rule-based evaluation.
     """
-    print("\n      [LLM JUDGE] Initializing evaluation...")
+    print("\n      [LLM JUDGE] Initializing iterative evaluation...")
+    print(f"      Confidence threshold: {CONFIDENCE_THRESHOLD}")
+    print(f"      Max iterations: {MAX_ITERATIONS}")
+    
     model = get_gemini_client()
     
     if model:
-        print("      ✅ Gemini API key found - using LLM evaluation")
+        print("      ✅ Gemini API key found - using LLM-as-Judge evaluation")
         print("      Model: gemini-2.0-flash")
         try:
-            result = generate_gemini_evaluation(model, structured_data, score_result, benchmark)
-            print("      ✅ Gemini evaluation successful")
+            result = iterative_gemini_evaluation(model, structured_data, score_result, benchmark)
+            print("      ✅ Iterative evaluation complete")
             return result
         except Exception as e:
             print(f"      ⚠️ Gemini evaluation failed: {e}")
@@ -84,62 +171,204 @@ def evaluate_junior_frontend(structured_data: Dict, score_result: Dict, benchmar
     return generate_rule_based_evaluation(structured_data, score_result, benchmark)
 
 
-def generate_gemini_evaluation(model, structured_data: Dict, score_result: Dict, benchmark: Dict) -> Dict:
-    """Generate evaluation using Gemini"""
-    print("\n      [GEMINI] Preparing prompt for LLM...")
+def iterative_gemini_evaluation(model, structured_data: Dict, score_result: Dict, benchmark: Dict) -> Dict:
+    """
+    Iterative LLM-as-a-Judge evaluation with confidence threshold loop.
+    
+    Continues refining evaluation until:
+    - Confidence >= CONFIDENCE_THRESHOLD (0.8)
+    - Or MAX_ITERATIONS reached
+    """
+    print("\n      [ITERATIVE] Starting confidence threshold loop...")
+    
+    # Prepare context data for prompts
+    context = prepare_evaluation_context(structured_data, score_result, benchmark)
+    
+    # Initial evaluation
+    print(f"\n      [ITERATION 1/{MAX_ITERATIONS}] Generating initial evaluation...")
+    current_eval = generate_single_evaluation(model, context)
+    
+    if not current_eval:
+        print("      ⚠️ Initial evaluation failed, using rule-based")
+        return generate_rule_based_evaluation(structured_data, score_result, benchmark)
+    
+    confidence = extract_confidence(current_eval)
+    print(f"      Initial confidence: {confidence:.2f}")
+    
+    iteration = 1
+    
+    # Iterative refinement loop
+    while confidence < CONFIDENCE_THRESHOLD and iteration < MAX_ITERATIONS:
+        iteration += 1
+        print(f"\n      [ITERATION {iteration}/{MAX_ITERATIONS}] Confidence {confidence:.2f} < {CONFIDENCE_THRESHOLD}, refining...")
+        
+        # Check consistency to identify issues
+        consistency_result = check_evaluation_consistency(model, current_eval, context)
+        issues = consistency_result.get('issues', ['General refinement needed'])
+        
+        print(f"      Consistency score: {consistency_result.get('consistency_score', 0):.2f}")
+        print(f"      Issues identified: {len(issues)}")
+        
+        # Generate refined evaluation
+        refined_eval = generate_refined_evaluation(
+            model, context, current_eval, confidence, issues
+        )
+        
+        if refined_eval:
+            new_confidence = extract_confidence(refined_eval)
+            print(f"      Refined confidence: {new_confidence:.2f}")
+            
+            # Only accept if confidence improved
+            if new_confidence > confidence:
+                current_eval = refined_eval
+                confidence = new_confidence
+            else:
+                print(f"      ⚠️ Confidence did not improve, keeping previous evaluation")
+                break
+        else:
+            print(f"      ⚠️ Refinement failed, keeping previous evaluation")
+            break
+    
+    # Final consistency check
+    print(f"\n      [FINAL] Running final consistency check...")
+    final_consistency = check_evaluation_consistency(model, current_eval, context)
+    
+    # Add metadata
+    current_eval['evaluation_metadata'] = {
+        'iterations': iteration,
+        'final_confidence': confidence,
+        'threshold': CONFIDENCE_THRESHOLD,
+        'threshold_met': confidence >= CONFIDENCE_THRESHOLD,
+        'consistency_score': final_consistency.get('consistency_score', 0),
+        'evaluation_type': 'iterative_llm_judge'
+    }
+    
+    # Ensure required fields exist
+    current_eval['confidence'] = confidence
+    current_eval['evaluation_type'] = 'iterative_llm_judge'
+    
+    # Add tier assessment
+    current_eval['tier_assessment'] = {
+        'tier': score_result.get('tier', 'Unknown'),
+        'percentile': benchmark.get('user_percentile', 50),
+        'interpretation': get_tier_interpretation(score_result.get('tier', 'Unknown'))
+    }
+    
+    print(f"\n      [COMPLETE] Final confidence: {confidence:.2f} after {iteration} iteration(s)")
+    print(f"      Threshold met: {confidence >= CONFIDENCE_THRESHOLD}")
+    
+    return current_eval
+
+
+def prepare_evaluation_context(structured_data: Dict, score_result: Dict, benchmark: Dict) -> Dict:
+    """Prepare context data for evaluation prompts"""
     breakdown = score_result.get('breakdown', {})
     form_data = structured_data.get('form', {})
     github_data = structured_data.get('github', {})
     
-    # Prepare prompt data
-    prompt = EVALUATION_PROMPT.format(
-        skills=', '.join(form_data.get('skills', [])) or 'Not provided',
-        experience_years=form_data.get('experience_years', 0),
-        github_info=f"Repos: {github_data.get('public_repos', 'N/A')}, Stars: {github_data.get('total_stars', 'N/A')}" if github_data else 'Not provided',
-        portfolio_info='Provided' if structured_data.get('portfolio') else 'Not provided',
-        overall_score=round(score_result.get('overall_score', 0) * 100),
-        tier=score_result.get('tier', 'Unknown'),
-        skill_score=round(breakdown.get('skill_strength', {}).get('raw_score', 0) * 100),
-        skill_level=breakdown.get('skill_strength', {}).get('level', 'unknown'),
-        github_score=round(breakdown.get('github_activity', {}).get('raw_score', 0) * 100),
-        github_level=breakdown.get('github_activity', {}).get('level', 'unknown'),
-        portfolio_score=round(breakdown.get('portfolio_quality', {}).get('raw_score', 0) * 100),
-        portfolio_level=breakdown.get('portfolio_quality', {}).get('level', 'unknown'),
-        exp_score=round(breakdown.get('experience_depth', {}).get('raw_score', 0) * 100),
-        exp_level=breakdown.get('experience_depth', {}).get('level', 'unknown'),
-        percentile=benchmark.get('user_percentile', 50)
+    return {
+        'skills': ', '.join(form_data.get('skills', [])) or 'Not provided',
+        'experience_years': form_data.get('experience_years', 0),
+        'github_info': f"Repos: {github_data.get('public_repos', 'N/A')}, Stars: {github_data.get('total_stars', 'N/A')}" if github_data else 'Not provided',
+        'portfolio_info': 'Provided' if structured_data.get('portfolio') else 'Not provided',
+        'overall_score': round(score_result.get('overall_score', 0) * 100),
+        'tier': score_result.get('tier', 'Unknown'),
+        'skill_score': round(breakdown.get('skill_strength', {}).get('raw_score', 0) * 100),
+        'skill_level': breakdown.get('skill_strength', {}).get('level', 'unknown'),
+        'github_score': round(breakdown.get('github_activity', {}).get('raw_score', 0) * 100),
+        'github_level': breakdown.get('github_activity', {}).get('level', 'unknown'),
+        'portfolio_score': round(breakdown.get('portfolio_quality', {}).get('raw_score', 0) * 100),
+        'portfolio_level': breakdown.get('portfolio_quality', {}).get('level', 'unknown'),
+        'exp_score': round(breakdown.get('experience_depth', {}).get('raw_score', 0) * 100),
+        'exp_level': breakdown.get('experience_depth', {}).get('level', 'unknown'),
+        'percentile': benchmark.get('user_percentile', 50),
+        'breakdown': breakdown,
+        'benchmark': benchmark,
+    }
+
+
+def generate_single_evaluation(model, context: Dict) -> Optional[Dict]:
+    """Generate a single evaluation with self-assessed confidence"""
+    prompt = EVALUATION_PROMPT.format(**context)
+    
+    try:
+        response = model.generate_content(prompt)
+        return parse_json_response(response.text)
+    except Exception as e:
+        print(f"      ⚠️ Evaluation generation error: {e}")
+        return None
+
+
+def generate_refined_evaluation(model, context: Dict, previous_eval: Dict, 
+                                prev_confidence: float, issues: list) -> Optional[Dict]:
+    """Generate a refined evaluation addressing identified issues"""
+    prompt = REFINEMENT_PROMPT.format(
+        prev_confidence=prev_confidence,
+        threshold=CONFIDENCE_THRESHOLD,
+        previous_evaluation=json.dumps(previous_eval, indent=2),
+        issues='\n'.join(f"- {issue}" for issue in issues),
+        **context
     )
     
-    print("      [GEMINI] Sending request to Gemini API...")
-    response = model.generate_content(prompt)
-    print("      [GEMINI] Response received, parsing JSON...")
-    
-    # Parse JSON response
     try:
-        # Clean response text
-        text = response.text.strip()
+        response = model.generate_content(prompt)
+        return parse_json_response(response.text)
+    except Exception as e:
+        print(f"      ⚠️ Refinement error: {e}")
+        return None
+
+
+def check_evaluation_consistency(model, evaluation: Dict, context: Dict) -> Dict:
+    """Check evaluation for internal consistency"""
+    prompt = CONSISTENCY_CHECK_PROMPT.format(
+        evaluation=json.dumps(evaluation, indent=2),
+        overall_score=context['overall_score'],
+        tier=context['tier'],
+        percentile=context['percentile']
+    )
+    
+    try:
+        response = model.generate_content(prompt)
+        result = parse_json_response(response.text)
+        return result if result else {'is_consistent': True, 'consistency_score': 0.7, 'issues': []}
+    except Exception as e:
+        print(f"      ⚠️ Consistency check error: {e}")
+        return {'is_consistent': True, 'consistency_score': 0.7, 'issues': []}
+
+
+def extract_confidence(evaluation: Dict) -> float:
+    """Extract confidence score from evaluation"""
+    # Try self_assessment first
+    self_assessment = evaluation.get('self_assessment', {})
+    if isinstance(self_assessment, dict):
+        conf = self_assessment.get('confidence', 0)
+        if isinstance(conf, (int, float)) and 0 <= conf <= 1:
+            return float(conf)
+    
+    # Fall back to top-level confidence
+    conf = evaluation.get('confidence', 0.5)
+    if isinstance(conf, (int, float)) and 0 <= conf <= 1:
+        return float(conf)
+    
+    return 0.5
+
+
+def parse_json_response(text: str) -> Optional[Dict]:
+    """Parse JSON from LLM response, handling markdown code blocks"""
+    try:
+        text = text.strip()
         if text.startswith('```json'):
             text = text[7:]
         if text.startswith('```'):
             text = text[3:]
         if text.endswith('```'):
             text = text[:-3]
-        
-        result = json.loads(text.strip())
-        result['confidence'] = 0.9
-        result['evaluation_type'] = 'gemini'
-        
-        # Add tier assessment
-        result['tier_assessment'] = {
-            'tier': score_result.get('tier', 'Unknown'),
-            'percentile': benchmark.get('user_percentile', 50),
-            'interpretation': get_tier_interpretation(score_result.get('tier', 'Unknown'))
-        }
-        
-        return result
+        return json.loads(text.strip())
     except json.JSONDecodeError:
-        # If JSON parsing fails, fall back to rule-based
-        return generate_rule_based_evaluation(structured_data, score_result, benchmark)
+        return None
+
+
+
 
 
 def generate_rule_based_evaluation(structured_data: Dict, score_result: Dict, benchmark: Dict) -> Dict:

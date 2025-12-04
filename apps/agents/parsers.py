@@ -1,7 +1,23 @@
-"""CV and document parsing utilities"""
+"""
+CV and Document Parsing Utilities
+Extracts structured information from PDF resumes using rule-based and AI methods.
+"""
 import re
-import pdfplumber
+import json
 from typing import Dict, List, Optional
+from django.conf import settings
+
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
 
 # Skill keywords database
@@ -23,6 +39,9 @@ YEAR_PATTERN = r'(19|20)\d{2}'
 
 def extract_text_from_pdf(pdf_path: str) -> str:
     """Extract text from PDF file"""
+    if not PDFPLUMBER_AVAILABLE:
+        return "Error: pdfplumber not installed. Run: pip install pdfplumber"
+    
     text_parts = []
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -136,3 +155,188 @@ def parse_cv_complete(pdf_path: str) -> Dict:
         'job_titles': titles,
         'confidence': min(confidence, 1.0)
     }
+
+
+# ============================================
+# AI-ENHANCED CV PARSING WITH GEMINI
+# ============================================
+
+CV_EXTRACTION_PROMPT = """
+You are an expert CV/Resume parser. Extract structured information from the following resume text.
+
+Resume Text:
+{cv_text}
+
+Extract and return a JSON object with the following structure:
+{{
+  "personal_info": {{
+    "name": "Full name",
+    "email": "email@example.com",
+    "phone": "phone number",
+    "location": "City, Country",
+    "linkedin": "LinkedIn URL if found",
+    "github": "GitHub URL if found",
+    "portfolio": "Portfolio URL if found"
+  }},
+  "summary": "Professional summary or objective (1-2 sentences)",
+  "skills": {{
+    "frontend": ["react", "typescript", "css"],
+    "backend": ["python", "node"],
+    "database": ["postgresql", "mongodb"],
+    "tools": ["git", "docker"],
+    "other": ["agile", "communication"]
+  }},
+  "experience": [
+    {{
+      "title": "Job Title",
+      "company": "Company Name",
+      "duration": "Jan 2022 - Present",
+      "years": 2,
+      "description": "Brief description of responsibilities",
+      "technologies": ["react", "typescript"]
+    }}
+  ],
+  "education": [
+    {{
+      "degree": "Bachelor's in Computer Science",
+      "institution": "University Name",
+      "year": 2020
+    }}
+  ],
+  "projects": [
+    {{
+      "name": "Project Name",
+      "description": "Brief description",
+      "technologies": ["react", "node"],
+      "url": "project URL if available"
+    }}
+  ],
+  "certifications": ["AWS Certified", "Google Cloud"],
+  "languages": ["English", "Spanish"],
+  "total_experience_years": 3,
+  "current_title": "Frontend Developer",
+  "seniority_level": "junior/mid/senior"
+}}
+
+Important:
+- Extract ALL skills mentioned, categorize them appropriately
+- Calculate total_experience_years from work history
+- Determine seniority_level based on experience and skills
+- If information is not found, use null or empty arrays
+- Return ONLY valid JSON, no markdown or extra text
+"""
+
+
+def get_gemini_client():
+    """Initialize Gemini client if available"""
+    if not GEMINI_AVAILABLE:
+        return None
+    
+    api_key = getattr(settings, 'GEMINI_API_KEY', None)
+    if api_key and api_key not in ['', 'your-gemini-api-key']:
+        genai.configure(api_key=api_key)
+        return genai.GenerativeModel('gemini-2.0-flash')
+    return None
+
+
+def parse_cv_with_ai(pdf_path: str) -> Dict:
+    """
+    Parse CV using Gemini AI for enhanced extraction.
+    Falls back to rule-based parsing if AI is unavailable.
+    """
+    print("\n[CV PARSER] Starting AI-enhanced CV parsing...")
+    
+    # Extract text from PDF
+    text = extract_text_from_pdf(pdf_path)
+    
+    if text.startswith("Error"):
+        return {'error': text, 'confidence': 0, 'method': 'failed'}
+    
+    # Try AI extraction first
+    model = get_gemini_client()
+    
+    if model:
+        print("[CV PARSER] Using Gemini AI for extraction...")
+        try:
+            ai_result = _extract_with_gemini(model, text)
+            if ai_result and not ai_result.get('error'):
+                ai_result['method'] = 'ai'
+                ai_result['raw_text'] = text[:3000]
+                print(f"[CV PARSER] ✅ AI extraction successful (confidence: {ai_result.get('confidence', 0):.2f})")
+                return ai_result
+        except Exception as e:
+            print(f"[CV PARSER] ⚠️ AI extraction failed: {e}")
+    
+    # Fallback to rule-based parsing
+    print("[CV PARSER] Using rule-based extraction...")
+    result = parse_cv_complete(pdf_path)
+    result['method'] = 'rule_based'
+    
+    return result
+
+
+def _extract_with_gemini(model, cv_text: str) -> Dict:
+    """Extract CV information using Gemini"""
+    prompt = CV_EXTRACTION_PROMPT.format(cv_text=cv_text[:8000])  # Limit text length
+    
+    response = model.generate_content(prompt)
+    response_text = response.text.strip()
+    
+    # Parse JSON response
+    if response_text.startswith('```json'):
+        response_text = response_text[7:]
+    if response_text.startswith('```'):
+        response_text = response_text[3:]
+    if response_text.endswith('```'):
+        response_text = response_text[:-3]
+    
+    data = json.loads(response_text.strip())
+    
+    # Flatten skills for compatibility
+    all_skills = []
+    skills_by_category = data.get('skills', {})
+    for category_skills in skills_by_category.values():
+        if isinstance(category_skills, list):
+            all_skills.extend(category_skills)
+    
+    # Calculate confidence based on extracted data
+    confidence = 0.6  # Base confidence for AI extraction
+    if data.get('personal_info', {}).get('name'):
+        confidence += 0.1
+    if all_skills:
+        confidence += 0.1
+    if data.get('experience'):
+        confidence += 0.1
+    if data.get('total_experience_years'):
+        confidence += 0.1
+    
+    return {
+        'personal_info': data.get('personal_info', {}),
+        'summary': data.get('summary', ''),
+        'skills_by_category': skills_by_category,
+        'all_skills': all_skills,
+        'experience': data.get('experience', []),
+        'education': data.get('education', []),
+        'projects': data.get('projects', []),
+        'certifications': data.get('certifications', []),
+        'languages': data.get('languages', []),
+        'experience_years': data.get('total_experience_years'),
+        'current_title': data.get('current_title', ''),
+        'seniority_level': data.get('seniority_level', 'junior'),
+        'contact_info': {
+            'emails': [data.get('personal_info', {}).get('email')] if data.get('personal_info', {}).get('email') else [],
+            'phones': [data.get('personal_info', {}).get('phone')] if data.get('personal_info', {}).get('phone') else [],
+            'github_urls': [data.get('personal_info', {}).get('github')] if data.get('personal_info', {}).get('github') else [],
+            'linkedin_urls': [data.get('personal_info', {}).get('linkedin')] if data.get('personal_info', {}).get('linkedin') else [],
+            'portfolio_urls': [data.get('personal_info', {}).get('portfolio')] if data.get('personal_info', {}).get('portfolio') else [],
+        },
+        'confidence': min(confidence, 1.0)
+    }
+
+
+def extract_skills_from_text(text: str) -> Dict:
+    """
+    Extract skills from any text (not just CV).
+    Useful for parsing job descriptions or project descriptions.
+    """
+    return extract_skills(text)
