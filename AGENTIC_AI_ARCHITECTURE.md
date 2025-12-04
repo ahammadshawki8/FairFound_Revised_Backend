@@ -8,13 +8,13 @@ A complete multi-agent AI system for evaluating and guiding junior frontend deve
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              USER INPUT                                      │
+│                              USER INPUT                                     │
 │          (Form Data, CV/Resume PDF, GitHub Username, Portfolio URL)         │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         AGENT ORCHESTRATOR                                   │
+│                         AGENT ORCHESTRATOR                                  │
 │    Coordinates pipeline execution with retry logic and event emission       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -50,20 +50,20 @@ A complete multi-agent AI system for evaluating and guiding junior frontend deve
                     └───────────────┼───────────────┘
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         SUPPORTING SYSTEMS                                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │  Monitoring │  │   Memory    │  │  Adaptive   │  │  Explainer  │        │
-│  │    Agent    │  │   System    │  │  Learning   │  │    Agent    │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
+│                         SUPPORTING SYSTEMS                                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │  Monitoring │  │   Memory    │  │  Adaptive   │  │  Explainer  │         │
+│  │    Agent    │  │   System    │  │  Learning   │  │    Agent    │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         DOWNSTREAM SERVICES                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   Roadmap   │  │ AI Chatbot  │  │   Human     │  │ AI Insights │        │
-│  │  Generator  │  │  (Gemini)   │  │   Review    │  │  Generator  │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
+│                         DOWNSTREAM SERVICES                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │   Roadmap   │  │ AI Chatbot  │  │   Human     │  │ AI Insights │         │
+│  │  Generator  │  │  (Gemini)   │  │   Review    │  │  Generator  │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -390,14 +390,14 @@ The LLM Judge uses an iterative confidence loop:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    CONFIDENCE LOOP                           │
-│                                                              │
+│                    CONFIDENCE LOOP                          │
+│                                                             │
 │  ┌──────────────┐                                           │
 │  │   Initial    │                                           │
 │  │  Evaluation  │                                           │
 │  └──────┬───────┘                                           │
-│         │                                                    │
-│         ▼                                                    │
+│         │                                                   │
+│         ▼                                                   │
 │  ┌──────────────┐     confidence < 0.8?                     │
 │  │  Confidence  │────────────────────┐                      │
 │  │    Check     │                    │ YES                  │
@@ -416,7 +416,7 @@ The LLM Judge uses an iterative confidence loop:
 │         │                          ▲            │           │
 │         │                          └────────────┘           │
 │         │                       (max 3 iterations)          │
-│         ▼                                                    │
+│         ▼                                                   │
 │  ┌──────────────┐                                           │
 │  │    Final     │                                           │
 │  │  Evaluation  │                                           │
